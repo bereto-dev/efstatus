@@ -11,10 +11,10 @@ class PopupPanel: NSPanel {
     private let progressBar  = ProgressBar()
     private let timeLabel    = label("",        size: 11, weight: .medium,   alpha: 0.75)
 
-    private let inTitleLabel  = label("ENTRADA", size: 9,  weight: .semibold, alpha: 0.45)
-    private let inWLabel      = label("— W",     size: 13, weight: .bold,     alpha: 1)
-    private let outTitleLabel = label("SALIDA",  size: 9,  weight: .semibold, alpha: 0.45)
-    private let outWLabel     = label("— W",     size: 13, weight: .bold,     alpha: 1)
+    private let inTitleLabel  = label("INPUT",  size: 9,  weight: .semibold, alpha: 0.45)
+    private let inWLabel      = label("— W",    size: 13, weight: .bold,     alpha: 1)
+    private let outTitleLabel = label("OUTPUT", size: 9,  weight: .semibold, alpha: 0.45)
+    private let outWLabel     = label("— W",    size: 13, weight: .bold,     alpha: 1)
 
     convenience init() {
         self.init(

@@ -88,7 +88,7 @@ class StatusBarController: NSObject {
     private func connect(_ creds: Credentials) {
         api = EcoFlowAPI(accessKey: creds.accessKey, secretKey: creds.secretKey, serial: creds.serial)
         poll()
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.poll()
         }
     }
@@ -100,12 +100,12 @@ class StatusBarController: NSObject {
                 let st = try await api.fetchStatus()
 
                 if st.inW == 0 && !self.prevInputWas0 {
-                    Notifier.send(title: "EFStatus", body: "Sin entrada — consumiendo \(Int(st.outW))W de batería")
+                    Notifier.send(title: "EFStatus", body: "No input power — drawing \(Int(st.outW))W from battery")
                 }
                 self.prevInputWas0 = st.inW == 0
 
                 if self.prevWasOffline {
-                    Notifier.send(title: "EFStatus", body: "Dispositivo en línea — \(st.soc)%")
+                    Notifier.send(title: "EFStatus", body: "Device back online — \(st.soc)%")
                 }
                 self.prevWasOffline = false
 
@@ -115,7 +115,7 @@ class StatusBarController: NSObject {
                 }
             } catch {
                 if !self.prevWasOffline {
-                    Notifier.send(title: "EFStatus", body: "Sin conexión al dispositivo")
+                    Notifier.send(title: "EFStatus", body: "Lost connection to device")
                 }
                 self.prevWasOffline = true
                 DispatchQueue.main.async {

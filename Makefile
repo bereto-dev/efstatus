@@ -16,6 +16,7 @@ $(BUNDLE): $(SOURCES) Resources/Info.plist
 		-framework CryptoKit \
 		-o $(EXEC)
 	@cp Resources/Info.plist $(BUNDLE)/Contents/Info.plist
+	@cp Resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	@echo "✓ Built $(BUNDLE)"
 
 run: all

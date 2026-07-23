@@ -14,7 +14,7 @@ class StatusBarController: NSObject {
         super.init()
 
         if let btn = statusItem.button {
-            btn.title  = "⚡ —"
+            btn.title  = "EF⚡ —"
             btn.action = #selector(togglePopup)
             btn.target = self
             btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -110,7 +110,7 @@ class StatusBarController: NSObject {
                 self.prevWasOffline = false
 
                 DispatchQueue.main.async {
-                    self.statusItem.button?.title = "⚡ \(st.soc)%"
+                    self.statusItem.button?.title = "EF⚡ \(st.soc)%"
                     self.popup?.update(st)
                 }
             } catch {
@@ -119,7 +119,7 @@ class StatusBarController: NSObject {
                 }
                 self.prevWasOffline = true
                 DispatchQueue.main.async {
-                    self.statusItem.button?.title = "⚡ —"
+                    self.statusItem.button?.title = "EF⚡ —"
                 }
             }
         }

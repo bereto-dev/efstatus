@@ -103,7 +103,7 @@ class PopupPanel: NSPanel {
 
         contentView?.layoutSubtreeIfNeeded()
         let fit = contentView!.fittingSize
-        setContentSize(NSSize(width: PANEL_W, height: fit.height + 12))
+        setContentSize(NSSize(width: PANEL_W, height: fit.height))
     }
 }
 

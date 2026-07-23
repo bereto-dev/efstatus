@@ -13,6 +13,25 @@ A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery st
 - Time to full / time to empty
 - Live input watts (green) and output watts (red)
 
+## Compatibility
+
+**Confirmed working**
+- EcoFlow Delta 2 ✅ (tested)
+- EcoFlow Delta 2 Max
+- EcoFlow Delta Pro
+- EcoFlow Delta Max
+
+**Likely compatible** (same API structure, untested)
+- Delta Mini
+- River 2 / River 2 Pro / River 2 Max
+- River Pro
+
+**Not supported**
+- PowerOcean, PowerStream — different API
+- Delta (1st gen), River (1st gen) — different field names
+
+> If you test EFStatus on a model not listed here, open an issue and let us know!
+
 ## Requirements
 
 - macOS 12 or later

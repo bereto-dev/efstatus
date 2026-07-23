@@ -3,10 +3,10 @@ import Cocoa
 class SetupWindow: NSWindow {
     var onSave: ((Credentials) -> Void)?
 
-    private let accessKeyField = NSSecureTextField()
-    private let secretKeyField = NSSecureTextField()
+    private let accessKeyField = NSTextField()
+    private let secretKeyField = NSTextField()
     private let serialField    = NSTextField()
-    private let statusLabel    = NSTextField()
+    private let statusLabel    = NSTextField(labelWithString: "")
 
     convenience init() {
         self.init(
@@ -19,6 +19,13 @@ class SetupWindow: NSWindow {
         isReleasedWhenClosed = false
         center()
         buildUI()
+        if let c = CredentialsManager.load() {
+            accessKeyField.stringValue = c.accessKey
+            secretKeyField.stringValue = c.secretKey
+            serialField.stringValue    = c.serial
+        }
+        makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func buildUI() {
@@ -43,7 +50,7 @@ class SetupWindow: NSWindow {
         secretKeyField.placeholderString = "Secret Key"
         serialField.placeholderString    = "Device Serial Number"
 
-        for f in [accessKeyField, secretKeyField] as [NSSecureTextField] {
+        for f in [accessKeyField, secretKeyField] {
             f.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         }
         serialField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)

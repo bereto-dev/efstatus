@@ -7,7 +7,7 @@ struct Credentials {
 }
 
 enum CredentialsManager {
-    private static let suite = UserDefaults(suiteName: "com.efstatus.app")!
+    private static let suite = UserDefaults.standard
 
     static func save(_ c: Credentials) {
         suite.set(c.accessKey, forKey: "accessKey")

@@ -38,7 +38,7 @@ Because the app isn't notarized (no Apple Developer account needed), macOS will 
 
 Get your Access Key, Secret Key, and device serial number from [developer.ecoflow.com](https://developer.ecoflow.com).
 
-To update credentials later: click the menu bar icon → **Preferences…**
+To update credentials later: right-click the menu bar icon → **Settings…**
 
 ## Notifications
 
@@ -49,6 +49,12 @@ EFStatus sends a macOS notification when:
 ## Origin
 
 Built by Roberto Pacheco because the EcoFlow Delta 2 doesn't surface consumption statistics in real time — and as his primary office backup power, he needed that data at a glance without picking up his phone.
+
+## Support
+
+If you find EFStatus useful, you can buy me a coffee ☕
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-bereto-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/bereto)
 
 ---
 

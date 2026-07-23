@@ -32,11 +32,6 @@ struct EFStatus {
     }
 }
 
-struct EcoFlowResponse: Decodable {
-    let code: String
-    let message: String?
-    let data: [String: Double]?
-}
 
 class EcoFlowAPI {
     let accessKey: String
@@ -66,18 +61,25 @@ class EcoFlowAPI {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let (data, _) = try await URLSession.shared.data(for: req)
-        let resp = try JSONDecoder().decode(EcoFlowResponse.self, from: data)
-        guard resp.code == "0", let q = resp.data else {
+        guard
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let code = json["code"] as? String, code == "0",
+            let q    = json["data"] as? [String: Any]
+        else {
+            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
             throw NSError(domain: "EcoFlow", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: resp.message ?? "API error"])
+                          userInfo: [NSLocalizedDescriptionKey: msg ?? "API error"])
         }
 
-        let inW       = (q["mppt.inWatts"] ?? 0) + (q["inv.inputWatts"] ?? 0)
-        let outW      = q["pd.wattsOutSum"] ?? q["inv.outputWatts"] ?? q["pd.wattsOut"] ?? 0
-        let soc       = Int(q["bms_emsStatus.lcdShowSoc"] ?? q["pd.soc"] ?? q["bms_bmsStatus.soc"] ?? 0)
-        let remainCap = q["bms_bmsStatus.remainCap"]
-        let designCap = q["bms_bmsStatus.designCap"]
-        let vol       = q["bms_bmsStatus.vol"]
+        func d(_ key: String) -> Double { (q[key] as? NSNumber)?.doubleValue ?? 0 }
+        func dOpt(_ key: String) -> Double? { (q[key] as? NSNumber)?.doubleValue }
+
+        let inW       = d("mppt.inWatts") + d("inv.inputWatts")
+        let outW      = dOpt("pd.wattsOutSum") ?? dOpt("inv.outputWatts") ?? d("pd.wattsOut")
+        let soc       = Int(dOpt("bms_emsStatus.lcdShowSoc") ?? dOpt("pd.soc") ?? d("bms_bmsStatus.soc"))
+        let remainCap = dOpt("bms_bmsStatus.remainCap")
+        let designCap = dOpt("bms_bmsStatus.designCap")
+        let vol       = dOpt("bms_bmsStatus.vol")
         let remainWh  = (remainCap != nil && vol != nil) ? Int(remainCap! * vol! / 1_000_000) : nil
         let capWh     = (designCap != nil && vol != nil) ? Int(designCap!  * vol! / 1_000_000) : nil
 

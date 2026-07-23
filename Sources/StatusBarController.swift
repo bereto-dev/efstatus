@@ -5,7 +5,8 @@ class StatusBarController: NSObject {
     private var popup:    PopupPanel?
     private var timer:    Timer?
     private var api:      EcoFlowAPI?
-    private var setupWin: SetupWindow?
+    private var setupWin:  SetupWindow?
+    private var aboutWin:  AboutWindow?
 
     private var prevInputWas0  = false
     private var prevWasOffline = false
@@ -72,6 +73,10 @@ class StatusBarController: NSObject {
         help.target = self
         menu.addItem(help)
 
+        let about = NSMenuItem(title: "About EFStatus", action: #selector(showAbout), keyEquivalent: "")
+        about.target = self
+        menu.addItem(about)
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit EFStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -81,6 +86,12 @@ class StatusBarController: NSObject {
 
     @objc private func openRepo() {
         NSWorkspace.shared.open(URL(string: "https://github.com/bereto-dev/efstatus")!)
+    }
+
+    @objc private func showAbout() {
+        if aboutWin == nil { aboutWin = AboutWindow() }
+        NSApp.activate(ignoringOtherApps: true)
+        aboutWin?.makeKeyAndOrderFront(nil)
     }
 
     // MARK: – Polling

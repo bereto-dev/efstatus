@@ -38,7 +38,14 @@ A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery st
 - Xcode Command Line Tools (`xcode-select --install`)
 - An [EcoFlow developer account](https://developer.ecoflow.com) with an API key
 
-## Build & run
+## Download & run (no build required)
+
+1. Download `EFStatus.app` from this repo
+2. Move it to your `/Applications` folder
+3. Right-click → **Open** → **Open** (required once to bypass Gatekeeper on unsigned apps)
+4. Enter your EcoFlow API credentials in the setup window
+
+## Build from source
 
 ```bash
 git clone https://github.com/bereto-dev/efstatus.git

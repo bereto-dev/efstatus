@@ -46,7 +46,13 @@ class StatusBarController: NSObject {
         guard let btn = statusItem.button,
               let screen = btn.window?.screen ?? NSScreen.main else { return }
 
-        if popup == nil { popup = PopupPanel() }
+        if popup == nil {
+            popup = PopupPanel()
+            popup?.onRefresh = { [weak self] in
+                self?.popup?.setRefreshing()
+                self?.poll()
+            }
+        }
 
         // Position below the status bar item
         let btnFrame   = btn.window!.convertToScreen(btn.frame)

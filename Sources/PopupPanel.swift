@@ -16,6 +16,9 @@ class PopupPanel: NSPanel {
     private let outTitleLabel = label("OUTPUT", size: 9,  weight: .semibold, alpha: 0.45)
     private let outWLabel     = label("— W",    size: 13, weight: .bold,     alpha: 1)
 
+    private let refreshButton = RefreshButton()
+    var onRefresh: (() -> Void)?
+
     convenience init() {
         self.init(
             contentRect: NSRect(x: 0, y: 0, width: PANEL_W, height: 160),
@@ -50,6 +53,12 @@ class PopupPanel: NSPanel {
         inWLabel.textColor  = NSColor(red: 0.25, green: 0.90, blue: 0.50, alpha: 1)
         outWLabel.textColor = NSColor(red: 1.00, green: 0.42, blue: 0.38, alpha: 1)
 
+        // Header row: BATTERY label + refresh button
+        let headerSpacer = NSView()
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        refreshButton.onTap = { [weak self] in self?.onRefresh?() }
+        let headerRow = hstack([batteryLabel, headerSpacer, refreshButton], spacing: 4, align: .centerY)
+
         // Percent row
         let pctRow = hstack([percentLabel, whLabel], spacing: 6, align: .lastBaseline)
 
@@ -68,7 +77,7 @@ class PopupPanel: NSPanel {
         let wattsRow = hstack([inCol, spacer, outCol], spacing: 0, align: .top)
 
         let stack = NSStackView(views: [
-            batteryLabel,
+            headerRow,
             pctRow,
             progressBar,
             timeLabel,
@@ -87,6 +96,7 @@ class PopupPanel: NSPanel {
             stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            headerRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -PAD * 2),
             progressBar.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -PAD * 2),
             div.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -PAD * 2),
             wattsRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -PAD * 2),
@@ -100,10 +110,23 @@ class PopupPanel: NSPanel {
         timeLabel.stringValue    = st.timeLabel
         inWLabel.stringValue     = "\(Int(st.inW)) W"
         outWLabel.stringValue    = "\(Int(st.outW)) W"
+        timeLabel.textColor      = NSColor.white.withAlphaComponent(0.75)
+        refreshButton.setLoading(false)
 
         contentView?.layoutSubtreeIfNeeded()
         let fit = contentView!.fittingSize
         setContentSize(NSSize(width: PANEL_W, height: fit.height))
+    }
+
+    func setRefreshing() {
+        percentLabel.stringValue = "—"
+        whLabel.stringValue      = ""
+        progressBar.progress     = 0
+        timeLabel.stringValue    = "Updating…"
+        timeLabel.textColor      = NSColor.white.withAlphaComponent(0.4)
+        inWLabel.stringValue     = "— W"
+        outWLabel.stringValue    = "— W"
+        refreshButton.setLoading(true)
     }
 }
 
@@ -162,5 +185,66 @@ private class Divider: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.white.withAlphaComponent(0.1).setFill()
         bounds.fill()
+    }
+}
+
+class RefreshButton: NSView {
+    var onTap: (() -> Void)?
+    private let imageView = NSImageView()
+    private var isLoading = false
+    private var spinTimer: Timer?
+
+    override init(frame: NSRect) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 16, height: 16))
+        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+        imageView.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")?
+            .withSymbolConfiguration(cfg)
+        imageView.contentTintColor = NSColor.white.withAlphaComponent(0.4)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            widthAnchor.constraint(equalToConstant: 16),
+            heightAnchor.constraint(equalToConstant: 16),
+        ])
+        let click = NSClickGestureRecognizer(target: self, action: #selector(tapped))
+        addGestureRecognizer(click)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func setLoading(_ loading: Bool) {
+        isLoading = loading
+        if loading {
+            imageView.contentTintColor = NSColor.white.withAlphaComponent(0.6)
+            startSpin()
+        } else {
+            stopSpin()
+            imageView.contentTintColor = NSColor.white.withAlphaComponent(0.4)
+            imageView.layer?.removeAllAnimations()
+        }
+    }
+
+    private func startSpin() {
+        imageView.wantsLayer = true
+        guard let layer = imageView.layer else { return }
+        layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        layer.position    = CGPoint(x: imageView.bounds.midX, y: imageView.bounds.midY)
+        let rotation = CABasicAnimation(keyPath: "transform.rotation")
+        rotation.fromValue   = 0
+        rotation.toValue     = -CGFloat.pi * 2
+        rotation.duration    = 0.8
+        rotation.repeatCount = .infinity
+        layer.add(rotation, forKey: "spin")
+    }
+
+    private func stopSpin() {
+        imageView.layer?.removeAnimation(forKey: "spin")
+    }
+
+    @objc private func tapped() {
+        guard !isLoading else { return }
+        onTap?()
     }
 }

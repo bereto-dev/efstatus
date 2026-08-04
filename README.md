@@ -76,6 +76,18 @@ EFStatus sends a macOS notification when:
 
 Built by Roberto Pacheco because the EcoFlow Delta 2 doesn't surface consumption statistics in real time — and as his primary office backup power, he needed that data at a glance without picking up his phone.
 
+## Help expand compatibility
+
+If you have an EcoFlow device not listed above and want to help add support for it, run the diagnostic script — it prints only field names and values, **no credentials or personal data are included in the output**.
+
+```bash
+curl -O https://raw.githubusercontent.com/bereto-dev/efstatus/main/diag.sh
+chmod +x diag.sh
+./diag.sh --access-key YOUR_KEY --secret-key YOUR_SECRET --serial YOUR_SERIAL
+```
+
+Then open a [GitHub issue](https://github.com/bereto-dev/efstatus/issues) and paste the output. That's all that's needed to add support for your device.
+
 ## Support
 
 If you find EFStatus useful, you can buy me a coffee ☕

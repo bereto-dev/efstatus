@@ -20,7 +20,8 @@ class AboutWindow: NSWindow {
         contentView = root
 
         // App name + icon row
-        let appName = NSTextField(labelWithString: "EFStatus")
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let appName = NSTextField(labelWithString: "EFStatus v\(version)")
         appName.font = .boldSystemFont(ofSize: 20)
 
         let appSub = NSTextField(wrappingLabelWithString:

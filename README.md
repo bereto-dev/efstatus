@@ -1,8 +1,10 @@
-# EFStatus
+# EFStatus (v1.0.0)
 
 A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions.
 
 ![menu bar showing ⚡ 89%](screenshot.png)
+
+> Running an older version? Compare the number above to the one in **About EFStatus** (right-click the menu bar icon), then re-download `EFStatus.app` from this repo if you're behind.
 
 ## What it shows
 

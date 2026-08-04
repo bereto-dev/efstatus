@@ -69,6 +69,10 @@ class StatusBarController: NSObject {
         settings.target = self
         menu.addItem(settings)
 
+        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(openRepo), keyEquivalent: "")
+        updates.target = self
+        menu.addItem(updates)
+
         let help = NSMenuItem(title: "Help & Support", action: #selector(openRepo), keyEquivalent: "")
         help.target = self
         menu.addItem(help)

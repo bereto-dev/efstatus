@@ -1,4 +1,4 @@
-# EFStatus (v1.1.0)
+# EFStatus (v1.2.0)
 
 A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions.
 
@@ -19,11 +19,13 @@ A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery st
 
 **Confirmed working**
 - EcoFlow Delta 2 ✅ (tested)
+- EcoFlow Delta 3 Max ✅ (tested)
 - EcoFlow Delta 2 Max
 - EcoFlow Delta Pro
 - EcoFlow Delta Max
 
 **Likely compatible** (same API structure, untested)
+- Delta 3
 - Delta Mini
 - River 2 / River 2 Pro / River 2 Max
 - River Pro

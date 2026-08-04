@@ -72,11 +72,30 @@ class EcoFlowAPI {
         }
 
         func d(_ key: String) -> Double { (q[key] as? NSNumber)?.doubleValue ?? 0 }
-        func dOpt(_ key: String) -> Double? { (q[key] as? NSNumber)?.doubleValue }
+        func dOpt(_ keys: String...) -> Double? { keys.compactMap { (q[$0] as? NSNumber)?.doubleValue }.first }
 
-        let inW       = d("mppt.inWatts") + d("inv.inputWatts")
-        let outW      = dOpt("pd.wattsOutSum") ?? dOpt("inv.outputWatts") ?? d("pd.wattsOut")
-        let soc       = Int(dOpt("bms_emsStatus.lcdShowSoc") ?? dOpt("pd.soc") ?? d("bms_bmsStatus.soc"))
+        // SOC — Delta 2 / Delta 3 / fallbacks
+        let soc = Int(
+            dOpt("bms_emsStatus.lcdShowSoc") ??        // Delta 2
+            dOpt("bmsMaster.f32ShowSoc") ??            // Delta 3
+            dOpt("bmsMaster.soc", "cmsBattSoc") ??     // Delta 3 alt
+            dOpt("ems.soc", "soc", "pd.soc") ??        // generic
+            dOpt("bms_bmsStatus.soc") ?? 0             // Delta 2 fallback
+        )
+
+        // Input watts
+        let delta2In = d("mppt.inWatts") + d("inv.inputWatts")
+        let inW = delta2In > 0 ? delta2In :
+            dOpt("bmsMaster.inputWatts", "pd.wattsInSum", "wattsInSum", "inputWatts", "powInSumW", "inputPower") ?? 0
+
+        // Output watts
+        let outW =
+            dOpt("pd.wattsOutSum") ??                  // Delta 2 + Delta 3
+            dOpt("bmsMaster.outputWatts") ??           // Delta 3
+            dOpt("wattsOutSum", "outputWatts", "powOutSumW", "outputPower") ??
+            dOpt("inv.outputWatts", "pd.wattsOut") ?? 0
+
+        // Remaining Wh — Delta 2 uses mAh×mV, Delta 3 may provide remainTime + power
         let remainCap = dOpt("bms_bmsStatus.remainCap")
         let designCap = dOpt("bms_bmsStatus.designCap")
         let vol       = dOpt("bms_bmsStatus.vol")

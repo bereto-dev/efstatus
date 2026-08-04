@@ -5,7 +5,7 @@ private let PAD:     CGFloat = 12
 
 class PopupPanel: NSPanel {
 
-    private let batteryLabel = label("BATTERY", size: 9,  weight: .semibold, alpha: 0.45)
+    private let batteryLabel = label("ECOFLOW", size: 9,  weight: .semibold, alpha: 0.45)
     private let percentLabel = label("—",       size: 26, weight: .bold,     alpha: 1)
     private let whLabel      = label("",        size: 11, weight: .regular,  alpha: 0.5)
     private let progressBar  = ProgressBar()
@@ -104,6 +104,7 @@ class PopupPanel: NSPanel {
     }
 
     func update(_ st: EFStatus) {
+        batteryLabel.stringValue = st.deviceLabel
         percentLabel.stringValue = "\(st.soc)%"
         whLabel.stringValue      = st.remainWh != nil ? "\(st.remainWh!) Wh" : ""
         progressBar.progress     = Double(st.soc) / 100.0

@@ -7,6 +7,7 @@ struct EFStatus {
     let soc: Int
     let remainWh: Int?
     let capacityWh: Int?
+    let deviceLabel: String
 
     var timeToEmptyMin: Int? {
         let net = outW - inW
@@ -83,17 +84,29 @@ class EcoFlowAPI {
             dOpt("bms_bmsStatus.soc") ?? 0             // Delta 2 fallback
         )
 
-        // Input watts
-        let delta2In = d("mppt.inWatts") + d("inv.inputWatts")
-        let inW = delta2In > 0 ? delta2In :
-            dOpt("bmsMaster.inputWatts", "pd.wattsInSum", "wattsInSum", "inputWatts", "powInSumW", "inputPower") ?? 0
+        // Detect device generation by field presence
+        let isDelta2 = q["mppt.inWatts"] != nil || q["inv.inputWatts"] != nil
+        let isDelta3 = q["bmsMaster.inputWatts"] != nil || q["powInSumW"] != nil
+
+        // Input watts — never mix Delta 2 and Delta 3 fields (pd.wattsInSum is stale on Delta 2)
+        let inW: Double
+        if isDelta2 {
+            inW = d("mppt.inWatts") + d("inv.inputWatts")
+        } else if isDelta3 {
+            inW = dOpt("bmsMaster.inputWatts", "powInSumW", "wattsInSum", "inputWatts", "inputPower") ?? 0
+        } else {
+            inW = dOpt("pd.wattsInSum") ?? 0
+        }
 
         // Output watts
-        let outW =
-            dOpt("pd.wattsOutSum") ??                  // Delta 2 + Delta 3
-            dOpt("bmsMaster.outputWatts") ??           // Delta 3
-            dOpt("wattsOutSum", "outputWatts", "powOutSumW", "outputPower") ??
-            dOpt("inv.outputWatts", "pd.wattsOut") ?? 0
+        let outW: Double
+        if isDelta2 {
+            outW = dOpt("pd.wattsOutSum", "inv.outputWatts", "pd.wattsOut") ?? 0
+        } else if isDelta3 {
+            outW = dOpt("bmsMaster.outputWatts", "powOutSumW", "wattsOutSum", "outputWatts", "outputPower") ?? 0
+        } else {
+            outW = dOpt("pd.wattsOutSum") ?? 0
+        }
 
         // Remaining Wh — Delta 2 uses mAh×mV, Delta 3 may provide remainTime + power
         let remainCap = dOpt("bms_bmsStatus.remainCap")
@@ -102,7 +115,9 @@ class EcoFlowAPI {
         let remainWh  = (remainCap != nil && vol != nil) ? Int(remainCap! * vol! / 1_000_000) : nil
         let capWh     = (designCap != nil && vol != nil) ? Int(designCap!  * vol! / 1_000_000) : nil
 
-        return EFStatus(inW: inW, outW: outW, soc: soc, remainWh: remainWh, capacityWh: capWh)
+        let deviceLabel = isDelta3 ? "DELTA 3" : isDelta2 ? "DELTA 2" : "ECOFLOW"
+
+        return EFStatus(inW: inW, outW: outW, soc: soc, remainWh: remainWh, capacityWh: capWh, deviceLabel: deviceLabel)
     }
 
     private func hmac(key: String, data: String) -> String {

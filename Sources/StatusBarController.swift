@@ -54,15 +54,15 @@ class StatusBarController: NSObject {
             }
         }
 
-        // Position below the status bar item
-        let btnFrame   = btn.window!.convertToScreen(btn.frame)
-        let panelW: CGFloat = 280
+        // Position flush below the status bar item, centered on icon
+        let btnFrame = btn.window!.convertToScreen(btn.frame)
+        let panelW   = popup?.frame.width ?? 220
         var x = btnFrame.midX - panelW / 2
-        let y = btnFrame.minY - 8
+        let y = btnFrame.minY + 2  // card has 6px top inset → net 4px visual gap
 
         // Keep on screen
-        x = min(x, screen.visibleFrame.maxX - panelW - 8)
-        x = max(x, screen.visibleFrame.minX + 8)
+        x = min(x, screen.visibleFrame.maxX - panelW - 4)
+        x = max(x, screen.visibleFrame.minX + 4)
 
         popup?.setFrameTopLeftPoint(NSPoint(x: x, y: y))
         popup?.orderFrontRegardless()

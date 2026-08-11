@@ -53,7 +53,7 @@ class PopupPanel: NSPanel {
         inWLabel.textColor  = NSColor(red: 0.25, green: 0.90, blue: 0.50, alpha: 1)
         outWLabel.textColor = NSColor(red: 1.00, green: 0.42, blue: 0.38, alpha: 1)
 
-        // Header row: BATTERY label + refresh button
+        // Header row: BATTERY label + updated timestamp + refresh button
         let headerSpacer = NSView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         refreshButton.onTap = { [weak self] in self?.onRefresh?() }

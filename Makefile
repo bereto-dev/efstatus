@@ -14,6 +14,7 @@ $(BUNDLE): $(SOURCES) Resources/Info.plist
 		-framework Cocoa \
 		-framework UserNotifications \
 		-framework CryptoKit \
+		-framework Network \
 		-o $(EXEC)
 	@cp Resources/Info.plist $(BUNDLE)/Contents/Info.plist
 	@cp Resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns

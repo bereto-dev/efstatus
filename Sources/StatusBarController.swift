@@ -1,7 +1,7 @@
 import Cocoa
 
 class StatusBarController: NSObject {
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private var statusItem: NSStatusItem!
     private var popup:    PopupPanel?
     private var setupWin: SetupWindow?
     private var aboutWin: AboutWindow?
@@ -21,12 +21,13 @@ class StatusBarController: NSObject {
 
     override init() {
         super.init()
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let btn = statusItem.button {
-            btn.attributedTitle = statusTitle("—")
             btn.action = #selector(togglePopup)
             btn.target = self
             btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        setStatusTitle("—")
         if let creds = CredentialsManager.load() { connect(creds) } else { showSetup() }
     }
 
@@ -167,7 +168,7 @@ class StatusBarController: NSObject {
                         Notifier.send(title: "EFStatus", body: "Lost connection to device")
                     }
                     self.prevWasOffline = true
-                    self.statusItem.button?.attributedTitle = self.statusTitle("—")
+                    self.setStatusTitle("—")
                 }
             }
         }
@@ -183,7 +184,7 @@ class StatusBarController: NSObject {
         }
         prevInputWas0 = st.inW == 0
 
-        statusItem.button?.attributedTitle = statusTitle("\(st.soc)%")
+        setStatusTitle("\(st.soc)%")
         popup?.update(st)
     }
 
@@ -286,18 +287,46 @@ class StatusBarController: NSObject {
 
     // MARK: – Status bar title helper
 
-    private func statusTitle(_ value: String) -> NSAttributedString {
-        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-        let str = NSMutableAttributedString(string: "EF")
-        if let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
-                .withSymbolConfiguration(cfg) {
-            let att = NSTextAttachment()
-            att.image = bolt
-            att.bounds = CGRect(x: 0, y: -2, width: 10, height: 12)
-            str.append(NSAttributedString(attachment: att))
+    private func setStatusTitle(_ value: String) {
+        guard let btn = statusItem.button else { return }
+
+        // Build a template image: "EF" text + bolt symbol side by side
+        let font = NSFont.menuBarFont(ofSize: 12)
+        let textAttrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ]
+        let label = "EF" as NSString
+        let textSize = label.size(withAttributes: textAttrs)
+
+        let symCfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+        let boltBase = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(symCfg)
+        let boltSize = boltBase?.size ?? NSSize(width: 8, height: 13)
+
+        let gap: CGFloat = 1
+        let imgW = textSize.width + gap + boltSize.width
+        let imgH: CGFloat = 16
+
+        let composite = NSImage(size: NSSize(width: imgW, height: imgH), flipped: false) { _ in
+            // Draw "EF" in white
+            label.draw(at: NSPoint(x: 0, y: (imgH - textSize.height) / 2),
+                       withAttributes: textAttrs)
+            // Draw bolt in white
+            if let bolt = boltBase {
+                NSColor.white.set()
+                bolt.draw(in: NSRect(x: textSize.width + gap,
+                                     y: (imgH - boltSize.height) / 2,
+                                     width: boltSize.width,
+                                     height: boltSize.height))
+            }
+            return true
         }
-        str.append(NSAttributedString(string: " \(value)"))
-        return str
+        composite.isTemplate = true
+
+        btn.image = composite
+        btn.imagePosition = .imageLeft
+        btn.title = value   // "89%" — uses button's default menu bar font
     }
 
     @objc func showSetup() {

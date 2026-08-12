@@ -22,7 +22,7 @@ class StatusBarController: NSObject {
     override init() {
         super.init()
         if let btn = statusItem.button {
-            btn.title  = "EF⚡ —"
+            btn.attributedTitle = statusTitle("—")
             btn.action = #selector(togglePopup)
             btn.target = self
             btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -167,7 +167,7 @@ class StatusBarController: NSObject {
                         Notifier.send(title: "EFStatus", body: "Lost connection to device")
                     }
                     self.prevWasOffline = true
-                    self.statusItem.button?.title = "EF⚡ —"
+                    self.statusItem.button?.attributedTitle = self.statusTitle("—")
                 }
             }
         }
@@ -183,7 +183,7 @@ class StatusBarController: NSObject {
         }
         prevInputWas0 = st.inW == 0
 
-        statusItem.button?.title = "EF⚡ \(st.soc)%"
+        statusItem.button?.attributedTitle = statusTitle("\(st.soc)%")
         popup?.update(st)
     }
 
@@ -282,6 +282,22 @@ class StatusBarController: NSObject {
         if aboutWin == nil { aboutWin = AboutWindow() }
         NSApp.activate(ignoringOtherApps: true)
         aboutWin?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: – Status bar title helper
+
+    private func statusTitle(_ value: String) -> NSAttributedString {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        let str = NSMutableAttributedString(string: "EF")
+        if let bolt = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(cfg) {
+            let att = NSTextAttachment()
+            att.image = bolt
+            att.bounds = CGRect(x: 0, y: -2, width: 10, height: 12)
+            str.append(NSAttributedString(attachment: att))
+        }
+        str.append(NSAttributedString(string: " \(value)"))
+        return str
     }
 
     @objc func showSetup() {

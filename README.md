@@ -1,4 +1,4 @@
-# EFStatus (v2.0.0)
+# EFStatus (v2.1.0)
 
 A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions.
 
@@ -100,6 +100,9 @@ chmod +x diag.sh
 No credentials or personal data are included in the output.
 
 ## Changelog
+
+### v2.1.0
+- New app icon and status bar icon using SF Symbol `bolt.fill`
 
 ### v2.0.0
 - **Real-time data via MQTT** — EFStatus now connects to EcoFlow's live data feed (the same one used by the official app). Values update the moment your device reports a change instead of every 10 seconds.

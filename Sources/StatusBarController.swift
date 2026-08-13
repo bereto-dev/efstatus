@@ -18,6 +18,8 @@ class StatusBarController: NSObject {
 
     private var prevInputWas0  = false
     private var prevWasOffline = false
+    private var outsideClickMonitor: Any?
+    private var localClickMonitor:   Any?
 
     override init() {
         super.init()
@@ -28,6 +30,11 @@ class StatusBarController: NSObject {
             btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         setStatusTitle("—")
+
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.closePopup()
+        }
+
         if let creds = CredentialsManager.load() { connect(creds) } else { showSetup() }
     }
 
@@ -201,7 +208,7 @@ class StatusBarController: NSObject {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp { showContextMenu(); return }
 
-        if let p = popup, p.isVisible { p.orderOut(nil); return }
+        if let p = popup, p.isVisible { closePopup(); return }
 
         guard let btn = statusItem.button,
               let screen = btn.window?.screen ?? NSScreen.main else { return }
@@ -209,7 +216,6 @@ class StatusBarController: NSObject {
         if popup == nil {
             popup = PopupPanel()
             popup?.onRefresh = { [weak self] in self?.manualRefresh() }
-            // Populate with current state if available
             if !deviceState.isEmpty { popup?.update(EcoFlowAPI.parseStatus(from: deviceState)) }
         }
 
@@ -223,6 +229,23 @@ class StatusBarController: NSObject {
 
         popup?.setFrameTopLeftPoint(NSPoint(x: x, y: y))
         popup?.orderFrontRegardless()
+
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.closePopup()
+        }
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.window !== self.popup && event.window !== self.statusItem.button?.window {
+                self.closePopup()
+            }
+            return event
+        }
+    }
+
+    private func closePopup() {
+        popup?.orderOut(nil)
+        if let m = outsideClickMonitor { NSEvent.removeMonitor(m); outsideClickMonitor = nil }
+        if let m = localClickMonitor   { NSEvent.removeMonitor(m); localClickMonitor   = nil }
     }
 
     private func showContextMenu() {

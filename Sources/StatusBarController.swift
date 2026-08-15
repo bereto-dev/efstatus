@@ -255,7 +255,7 @@ class StatusBarController: NSObject {
         settings.target = self
         menu.addItem(settings)
 
-        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(openRepo), keyEquivalent: "")
+        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(openUpdates), keyEquivalent: "")
         updates.target = self
         menu.addItem(updates)
 
@@ -281,6 +281,10 @@ class StatusBarController: NSObject {
     }
 
     // MARK: – Actions
+
+    @objc private func openUpdates() {
+        NSWorkspace.shared.open(URL(string: "https://bereto.gumroad.com/l/efstatus")!)
+    }
 
     @objc private func openRepo() {
         NSWorkspace.shared.open(URL(string: "https://github.com/bereto-dev/efstatus")!)

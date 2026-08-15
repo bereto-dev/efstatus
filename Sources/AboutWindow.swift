@@ -38,6 +38,7 @@ class AboutWindow: NSWindow {
 
         // Support
         let supportHeader = sectionHeader("Support")
+        let updatesBtn = linkButton(title: "🔄  Check for Updates", url: "https://bereto.gumroad.com/l/efstatus")
         let coffeeBtn = linkButton(title: "☕  Buy Me a Coffee", url: "https://buymeacoffee.com/bereto")
         let devBtn    = linkButton(title: "🌐  devteam.partners", url: "https://devteam.partners/about-us")
 
@@ -46,7 +47,7 @@ class AboutWindow: NSWindow {
             div(),
             originHeader, originBody,
             div(),
-            supportHeader, coffeeBtn, devBtn,
+            supportHeader, updatesBtn, coffeeBtn, devBtn,
         ])
         stack.orientation = .vertical
         stack.alignment   = .leading

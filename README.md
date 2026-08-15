@@ -1,10 +1,10 @@
-# EFStatus (v2.1.1)
+# EFStatus (v2.1.2)
 
-A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions.
+A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions. Ships as a universal binary for Intel and Apple Silicon.
 
-![menu bar showing ⚡ 89%](screenshot.png)
+![EFStatus menu bar icon and popup showing battery percent, watts in and out, and time remaining](cover.jpg)
 
-> Running an older version? Compare the number above to the one in **About EFStatus** (right-click the menu bar icon), then re-download `EFStatus.app` from this repo if you're behind.
+> Running an older version? Compare the number above to the one in **About EFStatus** (right-click the menu bar icon), then re-download from [Gumroad](https://bereto.gumroad.com/l/efstatus) if you're behind.
 
 ## What it shows
 
@@ -44,12 +44,15 @@ Starting with v2.0.0, EFStatus connects to EcoFlow's real-time MQTT feed — the
 ## Requirements
 
 - macOS 12 or later
-- Xcode Command Line Tools (`xcode-select --install`)
+- Intel or Apple Silicon Mac
 - An [EcoFlow developer account](https://developer.ecoflow.com) with an API key
+- Xcode Command Line Tools (`xcode-select --install`) to build from source
 
 ## Download & run (no build required)
 
-1. Download `EFStatus.app` from this repo
+Get `EFStatus.app` from [Gumroad](https://bereto.gumroad.com/l/efstatus).
+
+1. Download the app
 2. Move it to your `/Applications` folder
 3. Right-click → **Open** → **Open** (required once to bypass Gatekeeper on unsigned apps)
 4. Enter your EcoFlow API credentials in the setup window
@@ -68,6 +71,10 @@ The first launch opens a setup window where you enter your EcoFlow API credentia
 ## First launch security
 
 Because the app isn't notarized (no Apple Developer account needed), macOS will block it the first time. Right-click → **Open** → **Open** to bypass Gatekeeper once.
+
+## Settings
+
+Right-click the menu bar icon → **Check for Updates…** / **Settings…** / **About EFStatus** / **Quit EFStatus**.
 
 ## Credentials
 
@@ -100,6 +107,9 @@ chmod +x diag.sh
 No credentials or personal data are included in the output.
 
 ## Changelog
+
+### 2.1.2 — Intel Macs and Gumroad
+The downloadable app was Apple Silicon only, so it would not open on Intel Macs. It is now a universal build, and Check for Updates opens [Gumroad](https://bereto.gumroad.com/l/efstatus) instead of GitHub. GitHub is just for source if you want to build it yourself.
 
 ### v2.1.1
 - Fixed popup getting stuck open when monitors are disconnected or rearranged
@@ -144,4 +154,4 @@ If you find EFStatus useful, you can buy me a coffee ☕
 
 ---
 
-Built with Swift + AppKit. No external dependencies.
+Built with Swift + AppKit. Universal binary (x86_64 + arm64). No external dependencies.

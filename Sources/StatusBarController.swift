@@ -16,13 +16,18 @@ class StatusBarController: NSObject {
     private var reconnDelay:  TimeInterval = 5
     private var mqttLive      = false  // true once MQTT delivers at least one message
 
-    private var prevInputWas0  = false
-    private var prevWasOffline = false
+    private var inputLostTimer:     Timer?
+    private var inputConfirmedLost = false
+    private var prevWasOffline     = false
     private var outsideClickMonitor: Any?
     private var localClickMonitor:   Any?
 
     override init() {
         super.init()
+        UserDefaults.standard.register(defaults: [
+            "notifyInputLost":     true,
+            "notifyInputRestored": true,
+        ])
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let btn = statusItem.button {
             btn.action = #selector(togglePopup)
@@ -186,10 +191,27 @@ class StatusBarController: NSObject {
     private func updateUI(from state: [String: Any]) {
         let st = EcoFlowAPI.parseStatus(from: state)
 
-        if st.inW == 0 && !prevInputWas0 {
-            Notifier.send(title: "EFStatus", body: "No input power — drawing \(Int(st.outW))W from battery")
+        if st.inW == 0 {
+            if !inputConfirmedLost && inputLostTimer == nil {
+                inputLostTimer = Timer.scheduledTimer(withTimeInterval: 7, repeats: false) { [weak self] _ in
+                    guard let self else { return }
+                    self.inputLostTimer = nil
+                    self.inputConfirmedLost = true
+                    guard UserDefaults.standard.bool(forKey: "notifyInputLost") else { return }
+                    let cur = EcoFlowAPI.parseStatus(from: self.deviceState)
+                    Notifier.send(title: "EFStatus", body: "No input power — drawing \(Int(cur.outW)) W from battery")
+                }
+            }
+        } else {
+            inputLostTimer?.invalidate()
+            inputLostTimer = nil
+            if inputConfirmedLost {
+                inputConfirmedLost = false
+                if UserDefaults.standard.bool(forKey: "notifyInputRestored") {
+                    Notifier.send(title: "EFStatus", body: "Input power restored — \(Int(st.inW)) W")
+                }
+            }
         }
-        prevInputWas0 = st.inW == 0
 
         setStatusTitle("\(st.soc)%")
         popup?.update(st)

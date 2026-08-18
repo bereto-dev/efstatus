@@ -1,4 +1,4 @@
-# EFStatus (v2.1.2)
+# EFStatus (v2.2.0)
 
 A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions. Ships as a universal binary for Intel and Apple Silicon.
 
@@ -107,6 +107,12 @@ chmod +x diag.sh
 No credentials or personal data are included in the output.
 
 ## Changelog
+
+### 2.2.0 — Smarter notifications and bolt icon in popup
+- Replaced battery emoji in popup with the bolt SF Symbol used in the menu bar icon
+- "No input power" notification now waits 7 seconds before firing — transient blips no longer trigger it
+- New notification: input power restored after a confirmed outage
+- Both notifications can be toggled individually in Settings
 
 ### 2.1.2 — Intel Macs and Gumroad
 The downloadable app was Apple Silicon only, so it would not open on Intel Macs. It is now a universal build, and Check for Updates opens [Gumroad](https://bereto.gumroad.com/l/efstatus) instead of GitHub. GitHub is just for source if you want to build it yourself.

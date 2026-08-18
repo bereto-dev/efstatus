@@ -9,6 +9,7 @@ class PopupPanel: NSPanel {
     private let percentLabel = label("—",       size: 26, weight: .bold,     alpha: 1)
     private let whLabel      = label("",        size: 11, weight: .regular,  alpha: 0.5)
     private let progressBar  = ProgressBar()
+    private let timeBoltView = makeTimeBolt()
     private let timeLabel    = label("",        size: 11, weight: .medium,   alpha: 0.75)
 
     private let inTitleLabel  = label("INPUT",  size: 9,  weight: .semibold, alpha: 0.45)
@@ -76,11 +77,13 @@ class PopupPanel: NSPanel {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let wattsRow = hstack([inCol, spacer, outCol], spacing: 0, align: .top)
 
+        let timeRow = hstack([timeBoltView, timeLabel], spacing: 4, align: .centerY)
+
         let stack = NSStackView(views: [
             headerRow,
             pctRow,
             progressBar,
-            timeLabel,
+            timeRow,
             div,
             wattsRow,
         ])
@@ -112,6 +115,7 @@ class PopupPanel: NSPanel {
         inWLabel.stringValue     = "\(Int(st.inW)) W"
         outWLabel.stringValue    = "\(Int(st.outW)) W"
         timeLabel.textColor      = NSColor.white.withAlphaComponent(0.75)
+        timeBoltView.isHidden    = !st.hasTimeEstimate
         refreshButton.setLoading(false)
 
         contentView?.layoutSubtreeIfNeeded()
@@ -132,6 +136,16 @@ class PopupPanel: NSPanel {
 }
 
 // MARK: – Helpers
+
+private func makeTimeBolt() -> NSImageView {
+    let iv = NSImageView()
+    let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+    iv.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: nil)?
+        .withSymbolConfiguration(cfg)
+    iv.contentTintColor = NSColor.white.withAlphaComponent(0.75)
+    iv.translatesAutoresizingMaskIntoConstraints = false
+    return iv
+}
 
 private func label(_ s: String, size: CGFloat, weight: NSFont.Weight, alpha: CGFloat) -> NSTextField {
     let f = NSTextField(labelWithString: s)

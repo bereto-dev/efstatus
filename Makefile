@@ -22,6 +22,7 @@ $(BUNDLE): $(SOURCES) Resources/Info.plist Resources/AppIcon.icns
 	@rm -f $(EXEC)-x86_64 $(EXEC)-arm64
 	@cp Resources/Info.plist $(BUNDLE)/Contents/Info.plist
 	@cp Resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
+	codesign --force --deep --sign - --identifier com.efstatus.app $(BUNDLE)
 	@echo "✓ Built universal $(BUNDLE) (x86_64 + arm64)"
 
 run: all

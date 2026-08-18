@@ -8,9 +8,12 @@ class SetupWindow: NSWindow {
     private let serialField    = NSTextField()
     private let statusLabel    = NSTextField(labelWithString: "")
 
+    private let notifyLostCheck     = NSButton(checkboxWithTitle: "Notify when input power is lost (after 7 s)", target: nil, action: nil)
+    private let notifyRestoredCheck = NSButton(checkboxWithTitle: "Notify when input power is restored", target: nil, action: nil)
+
     convenience init() {
         self.init(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 400),
             styleMask:   [.titled, .closable],
             backing:     .buffered,
             defer:       false
@@ -24,6 +27,10 @@ class SetupWindow: NSWindow {
             secretKeyField.stringValue = c.secretKey
             serialField.stringValue    = c.serial
         }
+        notifyLostCheck.state     = UserDefaults.standard.bool(forKey: "notifyInputLost")     ? .on : .off
+        notifyRestoredCheck.state = UserDefaults.standard.bool(forKey: "notifyInputRestored") ? .on : .off
+        notifyLostCheck.target     = self; notifyLostCheck.action     = #selector(toggleNotifyLost)
+        notifyRestoredCheck.target = self; notifyRestoredCheck.action = #selector(toggleNotifyRestored)
         makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -69,12 +76,20 @@ class SetupWindow: NSWindow {
         helpBtn.font        = .systemFont(ofSize: 11)
         helpBtn.contentTintColor = .linkColor
 
+        let notifTitle = NSTextField(labelWithString: "Notifications")
+        notifTitle.font = .boldSystemFont(ofSize: 13)
+
+        for cb in [notifyLostCheck, notifyRestoredCheck] {
+            cb.font = .systemFont(ofSize: 12)
+        }
+
         let stack = NSStackView(views: [
             title, sub,
             label("Access Key"),  accessKeyField,
             label("Secret Key"),  secretKeyField,
             label("Serial Number"), serialField,
-            helpBtn, statusLabel, saveBtn
+            helpBtn, statusLabel, saveBtn,
+            notifTitle, notifyLostCheck, notifyRestoredCheck,
         ])
         stack.orientation = .vertical
         stack.alignment   = .leading
@@ -87,6 +102,8 @@ class SetupWindow: NSWindow {
         }
         stack.setCustomSpacing(2,  after: sub)
         stack.setCustomSpacing(12, after: saveBtn)
+        stack.setCustomSpacing(16, after: saveBtn)
+        stack.setCustomSpacing(4,  after: notifTitle)
 
         v.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -113,5 +130,13 @@ class SetupWindow: NSWindow {
 
     @objc private func openDocs() {
         NSWorkspace.shared.open(URL(string: "https://developer.ecoflow.com")!)
+    }
+
+    @objc private func toggleNotifyLost() {
+        UserDefaults.standard.set(notifyLostCheck.state == .on, forKey: "notifyInputLost")
+    }
+
+    @objc private func toggleNotifyRestored() {
+        UserDefaults.standard.set(notifyRestoredCheck.state == .on, forKey: "notifyInputRestored")
     }
 }

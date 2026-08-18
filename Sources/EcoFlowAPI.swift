@@ -27,10 +27,12 @@ struct EFStatus {
     }
 
     var timeLabel: String {
-        if let t = timeToFullMin  { return "⚡ Full in \(fmtTime(t))" }
-        if let t = timeToEmptyMin { return "🔋 \(fmtTime(t)) remaining" }
+        if let t = timeToFullMin  { return "Full in \(fmtTime(t))" }
+        if let t = timeToEmptyMin { return "\(fmtTime(t)) remaining" }
         return inW == 0 ? "No input power" : "Calculating…"
     }
+
+    var hasTimeEstimate: Bool { timeToFullMin != nil || timeToEmptyMin != nil }
 }
 
 struct MQTTCredentials {

@@ -1,12 +1,11 @@
 import Cocoa
-import UserNotifications
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var controller: StatusBarController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        Notifier.requestPermissionIfNeeded()
         buildAppMenu()
         controller = StatusBarController()
     }

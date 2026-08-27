@@ -108,9 +108,9 @@ class PopupPanel: NSPanel {
 
     func update(_ st: EFStatus) {
         batteryLabel.stringValue = st.deviceLabel
-        percentLabel.stringValue = "\(st.soc)%"
+        percentLabel.stringValue = st.socLabel
         whLabel.stringValue      = st.remainWh != nil ? "\(st.remainWh!) Wh" : ""
-        progressBar.progress     = Double(st.soc) / 100.0
+        progressBar.progress     = st.socProgress
         timeLabel.stringValue    = st.timeLabel
         inWLabel.stringValue     = "\(Int(st.inW)) W"
         outWLabel.stringValue    = "\(Int(st.outW)) W"
@@ -132,6 +132,18 @@ class PopupPanel: NSPanel {
         inWLabel.stringValue     = "— W"
         outWLabel.stringValue    = "— W"
         refreshButton.setLoading(true)
+    }
+
+    func setOffline() {
+        percentLabel.stringValue = "—"
+        whLabel.stringValue      = ""
+        progressBar.progress     = 0
+        timeLabel.stringValue    = "Lost connection"
+        timeLabel.textColor      = NSColor.white.withAlphaComponent(0.4)
+        timeBoltView.isHidden    = true
+        inWLabel.stringValue     = "— W"
+        outWLabel.stringValue    = "— W"
+        refreshButton.setLoading(false)
     }
 }
 

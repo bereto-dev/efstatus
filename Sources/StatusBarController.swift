@@ -8,13 +8,16 @@ class StatusBarController: NSObject {
 
     private var api:          EcoFlowAPI?
     private var mqttClient:   MQTTClient?
-    private var mqttCreds:    MQTTCredentials?
     private var deviceState:  [String: Any] = [:]   // merged state: REST fills it, MQTT updates it
 
-    private var pollTimer:    Timer?   // REST fallback when MQTT is down
+    private var pollTimer:    Timer?   // REST fallback when MQTT is down or quiet
     private var reconnTimer:  Timer?   // MQTT reconnect backoff
     private var reconnDelay:  TimeInterval = 5
-    private var mqttLive      = false  // true once MQTT delivers at least one message
+    private var mqttWanted    = false  // false while swapping credentials / tearing down
+    private var mqttLive      = false  // true while MQTT is delivering data
+    private var lastMQTTMessageAt: Date?
+    private var lastMQTTPacketAt:  Date?
+    private var connectGen    = 0
 
     private var inputLostTimer:     Timer?
     private var inputConfirmedLost = false
@@ -46,8 +49,18 @@ class StatusBarController: NSObject {
     // MARK: – Connection entry point
 
     private func connect(_ creds: Credentials) {
+        connectGen += 1
+        let gen = connectGen
         api = EcoFlowAPI(accessKey: creds.accessKey, secretKey: creds.secretKey, serial: creds.serial)
         deviceState.removeAll()
+        mqttWanted = true
+        mqttLive = false
+        lastMQTTMessageAt = nil
+        lastMQTTPacketAt = nil
+        inputLostTimer?.invalidate()
+        inputLostTimer = nil
+        inputConfirmedLost = false
+        prevWasOffline = false
 
         // 1. REST fetch — immediate display while MQTT connects
         restPoll()
@@ -56,10 +69,16 @@ class StatusBarController: NSObject {
         Task {
             do {
                 let mc = try await api!.fetchMQTTCredentials()
-                await MainActor.run { self.startMQTT(mc) }
+                await MainActor.run {
+                    guard self.connectGen == gen, self.mqttWanted else { return }
+                    self.startMQTT(mc)
+                }
             } catch {
-                // MQTT credentials unavailable — fall back to REST polling
-                await MainActor.run { self.startRestFallback() }
+                await MainActor.run {
+                    guard self.connectGen == gen, self.mqttWanted else { return }
+                    self.startRestFallback()
+                    self.scheduleReconnect()
+                }
             }
         }
     }
@@ -67,35 +86,48 @@ class StatusBarController: NSObject {
     // MARK: – MQTT
 
     private func startMQTT(_ creds: MQTTCredentials) {
-        mqttCreds = creds
-        reconnDelay = 5
+        stopMQTTClient()
 
         let client = MQTTClient()
         mqttClient = client
 
         client.onConnect = { [weak self] in
-            guard let self else { return }
+            guard let self, self.mqttWanted else { return }
             self.mqttLive = false
+            self.lastMQTTPacketAt = Date()
+            self.reconnDelay = 5
             client.subscribe(to: creds.topic)
-            // Keep a REST poll as safety net in case MQTT is silent for >30s
             self.startMQTTWatchdog()
+        }
+
+        client.onActivity = { [weak self] in
+            self?.lastMQTTPacketAt = Date()
         }
 
         client.onMessage = { [weak self] _, json in
             self?.handleMQTTMessage(json)
         }
 
-        client.onDisconnect = { [weak self] err in
-            guard let self else { return }
+        client.onDisconnect = { [weak self] _ in
+            guard let self, self.mqttWanted else { return }
             self.mqttLive = false
             self.stopWatchdog()
-            if err != nil { self.startRestFallback() }
+            self.startRestFallback()
             self.scheduleReconnect()
         }
 
         client.connect(host: creds.url, port: creds.port,
                        username: creds.username, password: creds.password,
                        clientId: creds.clientId)
+    }
+
+    private func stopMQTTClient() {
+        mqttClient?.onDisconnect = nil
+        mqttClient?.onMessage = nil
+        mqttClient?.onConnect = nil
+        mqttClient?.onActivity = nil
+        mqttClient?.disconnect()
+        mqttClient = nil
     }
 
     private func handleMQTTMessage(_ json: [String: Any]) {
@@ -106,13 +138,18 @@ class StatusBarController: NSObject {
         let numeric = params.filter { $0.value is NSNumber }
         guard !numeric.isEmpty else { return }
 
-        // Merge into device state
-        for (key, value) in numeric { deviceState[key] = value }
+        EcoFlowAPI.mergeMQTT(numeric, into: &deviceState)
 
+        lastMQTTMessageAt = Date()
+        lastMQTTPacketAt = Date()
         mqttLive = true
-        stopWatchdog()     // reset watchdog; real data arrived
         startMQTTWatchdog()
-        stopRestFallback() // MQTT working — no need for REST polling
+        stopRestFallback()
+
+        if prevWasOffline {
+            Notifier.send(title: "EFStatus", body: "Device back online")
+            prevWasOffline = false
+        }
 
         updateUI(from: deviceState)
     }
@@ -123,10 +160,34 @@ class StatusBarController: NSObject {
 
     private func startMQTTWatchdog() {
         watchdogTimer?.invalidate()
-        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
-            guard let self, !self.mqttLive else { return }
-            self.startRestFallback()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.mqttWatchdogFired()
         }
+    }
+
+    private func mqttWatchdogFired() {
+        let now = Date()
+        let dataAge = lastMQTTMessageAt.map { now.timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+        let packetAge = lastMQTTPacketAt.map { now.timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+
+        // No PUBLISH for 30s — resume REST so the menu bar cannot sit on stale MQTT data
+        if dataAge >= 30 {
+            mqttLive = false
+            startRestFallback()
+        }
+
+        // Half-open socket: keepalive is 60s, pings every 30s. No inbound packet for 90s → reconnect.
+        if packetAge >= 90 {
+            recoverQuietMQTT()
+        }
+    }
+
+    private func recoverQuietMQTT() {
+        stopWatchdog()
+        stopMQTTClient()
+        mqttLive = false
+        startRestFallback()
+        scheduleReconnect()
     }
 
     private func stopWatchdog() {
@@ -134,19 +195,39 @@ class StatusBarController: NSObject {
         watchdogTimer = nil
     }
 
-    // MARK: – MQTT reconnect (exponential backoff, max 60s)
+    // MARK: – MQTT reconnect (refresh certification; exponential backoff, max 60s)
 
     private func scheduleReconnect() {
+        guard mqttWanted else { return }
         reconnTimer?.invalidate()
         reconnTimer = Timer.scheduledTimer(withTimeInterval: reconnDelay, repeats: false) { [weak self] _ in
-            guard let self, let creds = self.mqttCreds else { return }
-            self.mqttClient?.disconnect()
-            self.startMQTT(creds)
+            self?.reconnectMQTT()
         }
         reconnDelay = min(reconnDelay * 2, 60)
     }
 
-    // MARK: – REST fallback polling (10s when MQTT is down)
+    private func reconnectMQTT() {
+        guard mqttWanted, let api else { return }
+        stopMQTTClient()
+        let gen = connectGen
+        Task {
+            do {
+                let mc = try await api.fetchMQTTCredentials()
+                await MainActor.run {
+                    guard self.connectGen == gen, self.mqttWanted else { return }
+                    self.startMQTT(mc)
+                }
+            } catch {
+                await MainActor.run {
+                    guard self.connectGen == gen, self.mqttWanted else { return }
+                    self.startRestFallback()
+                    self.scheduleReconnect()
+                }
+            }
+        }
+    }
+
+    // MARK: – REST fallback polling (10s when MQTT is down or quiet)
 
     private func startRestFallback() {
         guard pollTimer == nil else { return }
@@ -161,12 +242,15 @@ class StatusBarController: NSObject {
         pollTimer = nil
     }
 
-    private func restPoll() {
+    private func restPoll(force: Bool = false) {
         guard let api else { return }
+        let gen = connectGen
         Task {
             do {
                 let (quota, _) = try await api.fetchStatus()
                 await MainActor.run {
+                    guard self.connectGen == gen else { return }
+                    if self.mqttLive && !force { return }
                     self.deviceState = quota   // full replacement from REST
                     self.updateUI(from: quota)
                     if self.prevWasOffline {
@@ -176,11 +260,14 @@ class StatusBarController: NSObject {
                 }
             } catch {
                 await MainActor.run {
+                    guard self.connectGen == gen else { return }
+                    if self.mqttLive && !force { return }
                     if !self.prevWasOffline {
                         Notifier.send(title: "EFStatus", body: "Lost connection to device")
                     }
                     self.prevWasOffline = true
                     self.setStatusTitle("—")
+                    self.popup?.setOffline()
                 }
             }
         }
@@ -213,7 +300,7 @@ class StatusBarController: NSObject {
             }
         }
 
-        setStatusTitle("\(st.soc)%")
+        setStatusTitle(st.socLabel)
         popup?.update(st)
     }
 
@@ -221,7 +308,7 @@ class StatusBarController: NSObject {
 
     private func manualRefresh() {
         popup?.setRefreshing()
-        restPoll()   // force a REST fetch regardless of MQTT state
+        restPoll(force: true)   // force a REST fetch regardless of MQTT state
     }
 
     // MARK: – Popup
@@ -238,7 +325,11 @@ class StatusBarController: NSObject {
         if popup == nil {
             popup = PopupPanel()
             popup?.onRefresh = { [weak self] in self?.manualRefresh() }
-            if !deviceState.isEmpty { popup?.update(EcoFlowAPI.parseStatus(from: deviceState)) }
+            if prevWasOffline {
+                popup?.setOffline()
+            } else if !deviceState.isEmpty {
+                popup?.update(EcoFlowAPI.parseStatus(from: deviceState))
+            }
         }
 
         let btnFrame = btn.window!.convertToScreen(btn.frame)
@@ -383,11 +474,13 @@ class StatusBarController: NSObject {
             setupWin = SetupWindow()
             setupWin?.onSave = { [weak self] creds in
                 guard let self else { return }
-                self.mqttClient?.disconnect()
-                self.mqttClient = nil
+                self.mqttWanted = false
+                self.connectGen += 1
+                self.stopMQTTClient()
                 self.stopRestFallback()
                 self.stopWatchdog()
                 self.reconnTimer?.invalidate()
+                self.reconnTimer = nil
                 self.connect(creds)
             }
         }

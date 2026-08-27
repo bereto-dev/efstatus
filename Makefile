@@ -1,3 +1,4 @@
+# Version is defined in Resources/Info.plist (CFBundleShortVersionString 2.2.1 / CFBundleVersion 4).
 APP     = EFStatus
 BUNDLE  = $(APP).app
 EXEC    = $(BUNDLE)/Contents/MacOS/$(APP)

@@ -8,13 +8,18 @@ final class MQTTClient {
     var onMessage:    ((String, [String: Any]) -> Void)?
     var onConnect:    (() -> Void)?
     var onDisconnect: ((Error?) -> Void)?
+    var onActivity:   (() -> Void)?   // any inbound packet (PUBLISH, PINGRESP, …)
 
     // MARK: – Private state
+    private let io = DispatchQueue(label: "com.efstatus.mqtt")
+    private static let maxBuffer = 1_048_576
+
     private var connection: NWConnection?
     private var pingTimer:  Timer?
     private var buffer =    Data()
     private var nextPktId:  UInt16 = 1
     private var isRunning   = false
+    private var didNotifyDisconnect = false
 
     // MARK: – Configuration (stored for reconnect)
     private(set) var host     = ""
@@ -27,59 +32,75 @@ final class MQTTClient {
     // MARK: – Connect / Disconnect
 
     func connect(host: String, port: Int, username: String, password: String, clientId: String) {
-        self.host     = host
-        self.port     = port
-        self.username = username
-        self.password = password
-        self.clientId = clientId
-        isRunning = true
-        openConnection()
+        io.async {
+            self.teardownLocked()
+            self.host     = host
+            self.port     = port
+            self.username = username
+            self.password = password
+            self.clientId = clientId
+            self.isRunning = true
+            self.didNotifyDisconnect = false
+            self.openConnectionLocked()
+        }
     }
 
-    private func openConnection() {
+    private func openConnectionLocked() {
+        guard (1...65535).contains(port),
+              let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            failLocked(NSError(domain: "MQTT", code: 0,
+                               userInfo: [NSLocalizedDescriptionKey: "Invalid MQTT port \(port)"]))
+            return
+        }
         let params   = NWParameters.tls
-        let endpoint = NWEndpoint.hostPort(
-            host: NWEndpoint.Host(host),
-            port: NWEndpoint.Port(rawValue: UInt16(port))!
-        )
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
         let conn = NWConnection(to: endpoint, using: params)
         connection = conn
 
         conn.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            switch state {
-            case .ready:
-                self.sendConnect()
-                self.startReceiving()
-            case .failed(let err):
-                self.teardown()
-                DispatchQueue.main.async { self.onDisconnect?(err) }
-            case .cancelled:
-                self.teardown()
-                DispatchQueue.main.async { self.onDisconnect?(nil) }
-            default: break
+            self.io.async {
+                guard self.connection === conn, self.isRunning else { return }
+                switch state {
+                case .ready:
+                    self.sendLocked(self.connectPacket())
+                    self.startReceivingLocked(conn)
+                case .failed(let err):
+                    self.failLocked(err)
+                case .cancelled:
+                    self.failLocked(nil)
+                default: break
+                }
             }
         }
-        conn.start(queue: .global(qos: .utility))
+        conn.start(queue: io)
     }
 
     func subscribe(to topic: String) {
-        let id = pktId()
-        var pl = Data()
-        pl += mqttStr(topic)
-        pl.append(0x00)   // QoS 0
-        send(packet(type: 0x82, varHeader: u16be(id), payload: pl))
+        io.async {
+            guard self.isRunning else { return }
+            let id = self.pktId()
+            var pl = Data()
+            pl += mqttStr(topic)
+            pl.append(0x00)   // QoS 0
+            self.sendLocked(self.packet(type: 0x82, varHeader: u16be(id), payload: pl))
+        }
     }
 
     func disconnect() {
-        isRunning = false
-        send(Data([0xE0, 0x00]))
-        teardown()
+        io.async {
+            self.isRunning = false
+            if self.connection != nil {
+                self.sendLocked(Data([0xE0, 0x00]))
+            }
+            self.didNotifyDisconnect = true   // intentional; do not fire onDisconnect
+            self.teardownLocked()
+        }
     }
 
     // MARK: – MQTT CONNECT
 
-    private func sendConnect() {
+    private func connectPacket() -> Data {
         var vh = Data()
         vh += Data([0x00, 0x04]) + Data("MQTT".utf8)  // protocol name
         vh.append(0x04)                                 // protocol level 3.1.1
@@ -91,52 +112,90 @@ final class MQTTClient {
         pl += mqttStr(username)
         pl += mqttStr(password)
 
-        send(packet(type: 0x10, varHeader: vh, payload: pl))
+        return packet(type: 0x10, varHeader: vh, payload: pl)
     }
 
     // MARK: – Receive loop
 
-    private func startReceiving() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, done, err in
+    private func startReceivingLocked(_ conn: NWConnection) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, done, err in
             guard let self else { return }
-            if let data, !data.isEmpty { self.buffer.append(data) }
-            self.processBuffer()
-            if !done && err == nil { self.startReceiving() }
+            self.io.async {
+                guard self.connection === conn, self.isRunning else { return }
+                if let err {
+                    self.failLocked(err)
+                    return
+                }
+                if let data, !data.isEmpty {
+                    if self.buffer.count + data.count > Self.maxBuffer {
+                        self.failLocked(NSError(domain: "MQTT", code: 1,
+                                                userInfo: [NSLocalizedDescriptionKey: "MQTT receive buffer exceeded"]))
+                        return
+                    }
+                    self.buffer.append(data)
+                }
+                if !self.processBufferLocked() { return }
+                if done {
+                    self.failLocked(nil)
+                    return
+                }
+                self.startReceivingLocked(conn)
+            }
         }
     }
 
-    private func processBuffer() {
+    /// Returns false when the connection was torn down for a malformed frame.
+    @discardableResult
+    private func processBufferLocked() -> Bool {
         while buffer.count >= 2 {
-            // Decode variable remaining-length
             var mul = 1, rem = 0, i = 1
+            var lengthComplete = false
             while i < min(5, buffer.count) {
                 let b = Int(buffer[i])
                 rem += (b & 0x7F) * mul
-                mul *= 128; i += 1
-                if b & 0x80 == 0 { break }
-                if i == 5 { buffer.removeAll(); return }   // malformed
+                mul *= 128
+                i += 1
+                if b & 0x80 == 0 {
+                    lengthComplete = true
+                    break
+                }
             }
-            let hdrLen  = i
-            let total   = hdrLen + rem
-            guard buffer.count >= total else { return }
+            if i == 5 && !lengthComplete {
+                failLocked(NSError(domain: "MQTT", code: 2,
+                                   userInfo: [NSLocalizedDescriptionKey: "Malformed MQTT remaining length"]))
+                return false
+            }
+            guard lengthComplete else { return true }
+
+            if rem < 0 || rem > Self.maxBuffer {
+                failLocked(NSError(domain: "MQTT", code: 2,
+                                   userInfo: [NSLocalizedDescriptionKey: "MQTT frame exceeds buffer limit"]))
+                return false
+            }
+
+            let hdrLen = i
+            let total  = hdrLen + rem
+            guard buffer.count >= total else { return true }
 
             let pkt = Data(buffer.prefix(total))
-            buffer = Data(buffer.dropFirst(total))   // dropFirst resets startIndex to 0
-            dispatch(pkt, hdrLen: hdrLen)
+            buffer = Data(buffer.dropFirst(total))
+            dispatchLocked(pkt, hdrLen: hdrLen)
         }
+        return true
     }
 
-    private func dispatch(_ pkt: Data, hdrLen: Int) {
+    private func dispatchLocked(_ pkt: Data, hdrLen: Int) {
+        DispatchQueue.main.async { self.onActivity?() }
         switch pkt[0] & 0xF0 {
-        case 0x20: connack(pkt)
-        case 0x30: publish(pkt, hdrLen: hdrLen)
+        case 0x20: connackLocked(pkt)
+        case 0x30: publishLocked(pkt, hdrLen: hdrLen)
         case 0x90: break  // SUBACK
         case 0xD0: break  // PINGRESP
         default:   break
         }
     }
 
-    private func connack(_ pkt: Data) {
+    private func connackLocked(_ pkt: Data) {
         guard pkt.count >= 4 else { return }
         if pkt[3] == 0 {
             startPingTimer()
@@ -144,22 +203,24 @@ final class MQTTClient {
         } else {
             let err = NSError(domain: "MQTT", code: Int(pkt[3]),
                               userInfo: [NSLocalizedDescriptionKey: "CONNACK rejected (code \(pkt[3]))"])
-            teardown()
-            DispatchQueue.main.async { self.onDisconnect?(err) }
+            failLocked(err)
         }
     }
 
-    private func publish(_ pkt: Data, hdrLen: Int) {
+    private func publishLocked(_ pkt: Data, hdrLen: Int) {
         var off = hdrLen
         guard pkt.count > off + 1 else { return }
         let topicLen = Int(pkt[off]) << 8 | Int(pkt[off + 1])
         off += 2
-        guard pkt.count >= off + topicLen else { return }
+        guard topicLen >= 0, pkt.count >= off + topicLen else { return }
         let topic = String(data: pkt[off ..< off + topicLen], encoding: .utf8) ?? ""
         off += topicLen
 
         // Skip packet ID if QoS > 0
-        if (pkt[0] >> 1) & 0x03 > 0 { off += 2 }
+        if (pkt[0] >> 1) & 0x03 > 0 {
+            guard pkt.count >= off + 2 else { return }
+            off += 2
+        }
 
         guard off <= pkt.count else { return }
         let payload = pkt[off...]
@@ -177,22 +238,39 @@ final class MQTTClient {
                 withTimeInterval: Double(self.keepAlive) / 2,
                 repeats: true
             ) { [weak self] _ in
-                self?.send(Data([0xC0, 0x00]))
+                self?.io.async { self?.sendLocked(Data([0xC0, 0x00])) }
             }
         }
     }
 
     // MARK: – Helpers
 
-    private func send(_ data: Data) {
+    private func sendLocked(_ data: Data) {
         connection?.send(content: data, completion: .idempotent)
     }
 
-    private func teardown() {
-        DispatchQueue.main.async { self.pingTimer?.invalidate(); self.pingTimer = nil }
-        connection?.cancel()
+    private func failLocked(_ error: Error?) {
+        guard isRunning || connection != nil else { return }
+        isRunning = false
+        teardownLocked()
+        notifyDisconnectOnce(error)
+    }
+
+    private func notifyDisconnectOnce(_ error: Error?) {
+        guard !didNotifyDisconnect else { return }
+        didNotifyDisconnect = true
+        DispatchQueue.main.async { self.onDisconnect?(error) }
+    }
+
+    private func teardownLocked() {
+        let conn = connection
         connection = nil
         buffer.removeAll()
+        DispatchQueue.main.async {
+            self.pingTimer?.invalidate()
+            self.pingTimer = nil
+        }
+        conn?.cancel()
     }
 
     private func packet(type: UInt8, varHeader: Data, payload: Data) -> Data {
@@ -209,14 +287,19 @@ final class MQTTClient {
         return d
     }
 
-    private func mqttStr(_ s: String) -> Data { u16be(UInt16(s.utf8.count)) + Data(s.utf8) }
-    private func u16be(_ n: UInt16) -> Data   { Data([UInt8(n >> 8), UInt8(n & 0xFF)]) }
-
     private func pktId() -> UInt16 {
         nextPktId = nextPktId == .max ? 1 : nextPktId + 1
         return nextPktId
     }
 }
+
+private func mqttStr(_ s: String) -> Data {
+    let bytes = Data(s.utf8)
+    let count = min(bytes.count, Int(UInt16.max))
+    return u16be(UInt16(count)) + bytes.prefix(count)
+}
+
+private func u16be(_ n: UInt16) -> Data { Data([UInt8(n >> 8), UInt8(n & 0xFF)]) }
 
 private func +(l: Data, r: Data) -> Data  { var d = l; d.append(r); return d }
 private func +=(l: inout Data, r: Data)   { l.append(r) }

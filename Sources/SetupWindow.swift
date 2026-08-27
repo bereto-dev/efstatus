@@ -6,14 +6,16 @@ class SetupWindow: NSWindow {
     private let accessKeyField = NSTextField()
     private let secretKeyField = NSTextField()
     private let serialField    = NSTextField()
-    private let statusLabel    = NSTextField(labelWithString: "")
+    private let statusLabel    = NSTextField(wrappingLabelWithString: "")
+    private var saveBtn: NSButton!
+    private var verifyTask: Task<Void, Never>?
 
     private let notifyLostCheck     = NSButton(checkboxWithTitle: "Notify when input power is lost (after 7 s)", target: nil, action: nil)
     private let notifyRestoredCheck = NSButton(checkboxWithTitle: "Notify when input power is restored", target: nil, action: nil)
 
     convenience init() {
         self.init(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 420),
             styleMask:   [.titled, .closable],
             backing:     .buffered,
             defer:       false
@@ -31,6 +33,7 @@ class SetupWindow: NSWindow {
         notifyRestoredCheck.state = UserDefaults.standard.bool(forKey: "notifyInputRestored") ? .on : .off
         notifyLostCheck.target     = self; notifyLostCheck.action     = #selector(toggleNotifyLost)
         notifyRestoredCheck.target = self; notifyRestoredCheck.action = #selector(toggleNotifyRestored)
+        refreshNotifyWarning()
         makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -65,8 +68,10 @@ class SetupWindow: NSWindow {
         statusLabel.font      = .systemFont(ofSize: 11)
         statusLabel.textColor = .systemRed
         statusLabel.stringValue = ""
+        statusLabel.maximumNumberOfLines = 3
+        statusLabel.preferredMaxLayoutWidth = 372
 
-        let saveBtn = NSButton(title: "Save & Connect", target: self, action: #selector(save))
+        saveBtn = NSButton(title: "Save & Connect", target: self, action: #selector(save))
         saveBtn.bezelStyle = .rounded
         saveBtn.keyEquivalent = "\r"
 
@@ -119,13 +124,55 @@ class SetupWindow: NSWindow {
         let sk = secretKeyField.stringValue.trimmingCharacters(in: .whitespaces)
         let sn = serialField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !ak.isEmpty, !sk.isEmpty, !sn.isEmpty else {
+            statusLabel.textColor = .systemRed
             statusLabel.stringValue = "All fields are required."
             return
         }
+
+        verifyTask?.cancel()
+        saveBtn.isEnabled = false
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.stringValue = "Checking credentials…"
+
         let creds = Credentials(accessKey: ak, secretKey: sk, serial: sn)
-        CredentialsManager.save(creds)
-        onSave?(creds)
-        close()
+        let api = EcoFlowAPI(accessKey: ak, secretKey: sk, serial: sn)
+        verifyTask = Task { [weak self] in
+            do {
+                try await api.verifyCredentials()
+                try Task.checkCancellation()
+                await MainActor.run {
+                    guard let self, self.isVisible else { return }
+                    CredentialsManager.save(creds)
+                    self.statusLabel.stringValue = ""
+                    self.saveBtn.isEnabled = true
+                    self.onSave?(creds)
+                    self.close()
+                }
+            } catch is CancellationError {
+                await MainActor.run { self?.saveBtn.isEnabled = true }
+            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.saveBtn.isEnabled = true
+                    self.statusLabel.textColor = .systemRed
+                    self.statusLabel.stringValue = Self.verifyErrorMessage(error)
+                }
+            }
+        }
+    }
+
+    private static func verifyErrorMessage(_ error: Error) -> String {
+        if let urlErr = error as? URLError {
+            switch urlErr.code {
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut,
+                 .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return "Could not reach EcoFlow. Check your connection."
+            default:
+                break
+            }
+        }
+        let msg = error.localizedDescription
+        return msg.isEmpty ? "Could not verify credentials." : msg
     }
 
     @objc private func openDocs() {
@@ -134,9 +181,37 @@ class SetupWindow: NSWindow {
 
     @objc private func toggleNotifyLost() {
         UserDefaults.standard.set(notifyLostCheck.state == .on, forKey: "notifyInputLost")
+        explainNotifyIfNeeded(notifyLostCheck)
     }
 
     @objc private func toggleNotifyRestored() {
         UserDefaults.standard.set(notifyRestoredCheck.state == .on, forKey: "notifyInputRestored")
+        explainNotifyIfNeeded(notifyRestoredCheck)
+    }
+
+    private func explainNotifyIfNeeded(_ checkbox: NSButton) {
+        guard checkbox.state == .on else {
+            refreshNotifyWarning()
+            return
+        }
+        Notifier.requestAndExplain { [weak self] message in
+            guard let self else { return }
+            if let message {
+                self.statusLabel.textColor = .systemOrange
+                self.statusLabel.stringValue = message
+            } else if self.statusLabel.textColor == .systemOrange {
+                self.statusLabel.stringValue = ""
+            }
+        }
+    }
+
+    private func refreshNotifyWarning() {
+        Notifier.authorizationDeniedMessage { [weak self] message in
+            guard let self else { return }
+            if let message {
+                self.statusLabel.textColor = .systemOrange
+                self.statusLabel.stringValue = message
+            }
+        }
     }
 }

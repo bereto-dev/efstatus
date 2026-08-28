@@ -1,4 +1,4 @@
-# EFStatus (v2.2.0)
+# EFStatus (v2.2.1)
 
 A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions. Ships as a universal binary for Intel and Apple Silicon.
 
@@ -16,9 +16,15 @@ A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery st
 - Live input watts (green) and output watts (red)
 - Device model (DELTA 2 / DELTA 3)
 
+SOC is shown as `—` when EcoFlow has not sent a battery percentage (it is not displayed as `0%` unless the device actually reports 0). If the device or API is unreachable, the menu bar and popup show `—` / Lost connection instead of leftover numbers.
+
 ## How it works
 
-Starting with v2.0.0, EFStatus connects to EcoFlow's real-time MQTT feed — the same channel used by the official app. Data updates the moment your device reports a change, instead of polling every 10 seconds. If the MQTT connection drops, the app falls back to REST polling automatically and reconnects in the background.
+Starting with v2.0.0, EFStatus connects to EcoFlow's real-time MQTT feed — the same channel used by the official app. Data updates the moment your device reports a change, instead of polling every 10 seconds.
+
+If MQTT disconnects, goes quiet for 30 seconds, or the socket looks half-open (no inbound packets for 90 seconds), the app falls back to REST polling, shows offline honestly when REST also fails, and reconnects in the background. Each reconnect fetches a fresh MQTT certificate from EcoFlow instead of reusing a cached password.
+
+On first launch (and whenever you change keys in Settings), **Save & Connect** checks the Access Key, Secret Key, and device SN against EcoFlow before the window closes. Empty fields still show “All fields are required.” Wrong keys or SN stay on Setup with the API error.
 
 ## Compatibility
 
@@ -66,7 +72,9 @@ make
 open EFStatus.app
 ```
 
-The first launch opens a setup window where you enter your EcoFlow API credentials. They're saved in `UserDefaults` on your Mac — never sent anywhere other than the EcoFlow API.
+Build on a Mac (`swiftc` + `lipo`). Linux cannot produce a real `EFStatus.app`.
+
+The first launch opens a setup window where you enter your EcoFlow API credentials. They're saved in `UserDefaults` on your Mac — never sent anywhere other than the EcoFlow API. Access Key, Secret Key, and device SN are shown in plain text in Setup, Settings, About, and Copy Diagnostics on purpose.
 
 ## First launch security
 
@@ -82,11 +90,16 @@ Get your Access Key, Secret Key, and device serial number from [developer.ecoflo
 
 To update credentials later: right-click the menu bar icon → **Settings…**
 
+Save verifies the keys and SN against EcoFlow before dismissing the window.
+
 ## Notifications
 
 EFStatus sends a macOS notification when:
 - Input power drops to 0 W (running on battery only)
+- Input power is restored after a confirmed outage
 - The device goes offline or comes back online
+
+Those first two can be toggled in Settings. If you turn them on but macOS has denied notification permission (or a send fails), EFStatus tells you instead of failing silently.
 
 ## Origin
 
@@ -96,7 +109,9 @@ Built by Roberto Pacheco because the EcoFlow Delta 2 doesn't surface consumption
 
 If you have an EcoFlow device not listed above and want to help add support for it, run the diagnostic from the app: right-click the menu bar icon → **Copy Diagnostics**, then open a [GitHub issue](https://github.com/bereto-dev/efstatus/issues) and paste the output.
 
-Or run it from the terminal:
+**Copy Diagnostics includes the device serial number on purpose** (along with the raw quota fields). Access Key and Secret Key are not copied.
+
+Or run it from the terminal (this script does **not** print credentials or the serial number):
 
 ```bash
 curl -O https://raw.githubusercontent.com/bereto-dev/efstatus/main/diag.sh
@@ -104,9 +119,19 @@ chmod +x diag.sh
 ./diag.sh --access-key YOUR_KEY --secret-key YOUR_SECRET --serial YOUR_SERIAL
 ```
 
-No credentials or personal data are included in the output.
-
 ## Changelog
+
+### 2.2.1 — MQTT silence, setup validation, honest stale data
+- MQTT watchdog actually fires after the first live message: 30s without PUBLISH falls back to REST; 90s without any inbound packet reconnects
+- Lost connection / back online works on the MQTT path, not only REST `catch`
+- Reconnect refreshes `/iot-open/sign/certification` instead of looping on a cached MQTT password
+- Setup **Save & Connect** verifies keys and SN against EcoFlow before closing; bad or empty credentials stay on the window
+- MQTT client: no force-unwrap on port, 1 MB receive cap, teardown-safe receive loop, malformed frames disconnect instead of growing the buffer
+- Incremental MQTT updates treat omitted watt fields as 0 when a packet includes any input/output watts (no leftover charger watts)
+- REST failures now surface HTTP status instead of looking healthy
+- SOC displays `—` when the value is unknown, not a fake `0%`
+- Notification permission / send failures are no longer silent if notification toggles are on
+- Build number (`CFBundleVersion`) unstuck from `3`; marketing version is 2.2.1
 
 ### 2.2.0 — Smarter notifications and bolt icon in popup
 - Replaced battery emoji in popup with the bolt SF Symbol used in the menu bar icon

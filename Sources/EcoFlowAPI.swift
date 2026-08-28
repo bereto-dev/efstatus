@@ -4,10 +4,13 @@ import CryptoKit
 struct EFStatus {
     let inW: Double
     let outW: Double
-    let soc: Int
+    let soc: Int?
     let remainWh: Int?
     let capacityWh: Int?
     let deviceLabel: String
+
+    var socLabel: String { soc.map { "\($0)%" } ?? "—" }
+    var socProgress: Double { soc.map { Double($0) / 100.0 } ?? 0 }
 
     var timeToEmptyMin: Int? {
         let net = outW - inW
@@ -62,17 +65,19 @@ class EcoFlowAPI {
         return (quota, EcoFlowAPI.parseStatus(from: quota))
     }
 
+    /// Live check used by Setup. Requires a non-empty quota so a wrong SN cannot pass.
+    func verifyCredentials() async throws {
+        let quota = try await fetchQuota()
+        if quota.isEmpty {
+            throw ecoError(code: 1, message: "No data for this serial number. Check the device SN.")
+        }
+    }
+
     private func fetchQuota() async throws -> [String: Any] {
-        let req = try signedRequest(path: "/iot-open/sign/device/quota/all?sn=\(serial)")
-        let (data, _) = try await URLSession.shared.data(for: req)
-        guard
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let code = json["code"] as? String, code == "0",
-            let q    = json["data"] as? [String: Any]
-        else {
-            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
-            throw NSError(domain: "EcoFlow", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: msg ?? "API error"])
+        let json = try await ecoflowJSON(path: "/iot-open/sign/device/quota/all?sn=\(serial)")
+        try requireOK(json)
+        guard let q = json["data"] as? [String: Any] else {
+            throw ecoError(code: 1, message: "API error")
         }
         return q
     }
@@ -80,20 +85,16 @@ class EcoFlowAPI {
     // MARK: – MQTT credentials
 
     func fetchMQTTCredentials() async throws -> MQTTCredentials {
-        let req = try signedRequest(path: "/iot-open/sign/certification")
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let json = try await ecoflowJSON(path: "/iot-open/sign/certification")
+        try requireOK(json)
         guard
-            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let code = json["code"] as? String, code == "0",
-            let d    = json["data"] as? [String: Any],
-            let url      = d["url"]                  as? String,
-            let portStr  = d["port"]                 as? String,
-            let port     = Int(portStr),
-            let username = d["certificateAccount"]   as? String,
-            let password = d["certificatePassword"]  as? String
+            let d        = json["data"] as? [String: Any],
+            let url      = d["url"] as? String,
+            let port     = Self.intValue(d["port"]),
+            let username = d["certificateAccount"] as? String,
+            let password = d["certificatePassword"] as? String
         else {
-            throw NSError(domain: "EcoFlow", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "MQTT certification failed"])
+            throw ecoError(code: 2, message: "MQTT certification failed")
         }
         let clientId = "ANDROID_\(username)_\(Int.random(in: 100_000...999_999))"
         let topic    = "/app/device/property/\(serial)"
@@ -118,18 +119,41 @@ class EcoFlowAPI {
 
     // MARK: – Status parsing (static — used by both REST and MQTT)
 
+    static let inputWattKeys: Set<String> = [
+        "mppt.inWatts", "inv.inputWatts", "bmsMaster.inputWatts", "powInSumW",
+        "wattsInSum", "inputWatts", "inputPower", "pd.wattsInSum",
+    ]
+    static let outputWattKeys: Set<String> = [
+        "pd.wattsOutSum", "inv.outputWatts", "pd.wattsOut", "bmsMaster.outputWatts",
+        "powOutSumW", "wattsOutSum", "outputWatts", "outputPower",
+    ]
+
+    /// Incremental MQTT merge. If a packet includes any input (or output) watt field,
+    /// omitted sibling watt fields are treated as 0 so leftover charger watts cannot stick.
+    static func mergeMQTT(_ numeric: [String: Any], into state: inout [String: Any]) {
+        let keys = Set(numeric.keys)
+        if !keys.isDisjoint(with: inputWattKeys) {
+            for k in inputWattKeys { state[k] = NSNumber(value: 0) }
+        }
+        if !keys.isDisjoint(with: outputWattKeys) {
+            for k in outputWattKeys { state[k] = NSNumber(value: 0) }
+        }
+        for (k, v) in numeric { state[k] = v }
+    }
+
     static func parseStatus(from q: [String: Any]) -> EFStatus {
         func d(_ k: String) -> Double { (q[k] as? NSNumber)?.doubleValue ?? 0 }
         func dOpt(_ keys: String...) -> Double? { keys.compactMap { (q[$0] as? NSNumber)?.doubleValue }.first }
 
-        // SOC
-        let soc = Int(
-            dOpt("bms_emsStatus.lcdShowSoc") ??
-            dOpt("bmsMaster.f32ShowSoc") ??
-            dOpt("bmsMaster.soc", "cmsBattSoc") ??
-            dOpt("ems.soc", "soc", "pd.soc") ??
-            dOpt("bms_bmsStatus.soc") ?? 0
-        )
+        // SOC — nil when no field is present so the UI can show "—" instead of a fake 0%
+        let soc: Int? = {
+            if let v = dOpt("bms_emsStatus.lcdShowSoc") { return Int(v) }
+            if let v = dOpt("bmsMaster.f32ShowSoc") { return Int(v) }
+            if let v = dOpt("bmsMaster.soc", "cmsBattSoc") { return Int(v) }
+            if let v = dOpt("ems.soc", "soc", "pd.soc") { return Int(v) }
+            if let v = dOpt("bms_bmsStatus.soc") { return Int(v) }
+            return nil
+        }()
 
         // Device generation
         let isDelta2 = q["mppt.inWatts"] != nil || q["inv.inputWatts"] != nil
@@ -167,6 +191,46 @@ class EcoFlowAPI {
 
         return EFStatus(inW: inW, outW: outW, soc: soc,
                         remainWh: remainWh, capacityWh: capWh, deviceLabel: deviceLabel)
+    }
+
+    // MARK: – Transport
+
+    private func ecoflowJSON(path: String) async throws -> [String: Any] {
+        let req = try signedRequest(path: path)
+        let (data, response) = try await URLSession.shared.data(for: req)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            let apiMsg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
+            throw ecoError(code: http.statusCode, message: apiMsg ?? "EcoFlow HTTP \(http.statusCode)")
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ecoError(code: 1, message: "Invalid EcoFlow response")
+        }
+        return json
+    }
+
+    private func requireOK(_ json: [String: Any]) throws {
+        let ok: Bool
+        if let s = json["code"] as? String {
+            ok = s == "0"
+        } else if let n = json["code"] as? NSNumber {
+            ok = n.intValue == 0
+        } else {
+            ok = false
+        }
+        guard ok else {
+            throw ecoError(code: 1, message: (json["message"] as? String) ?? "API error")
+        }
+    }
+
+    private func ecoError(code: Int, message: String) -> NSError {
+        NSError(domain: "EcoFlow", code: code,
+                userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private static func intValue(_ raw: Any?) -> Int? {
+        if let s = raw as? String { return Int(s) }
+        if let n = raw as? NSNumber { return n.intValue }
+        return nil
     }
 
     // MARK: – Signing

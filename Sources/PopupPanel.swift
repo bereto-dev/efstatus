@@ -17,6 +17,11 @@ class PopupPanel: NSPanel {
     private let outTitleLabel = label("OUTPUT", size: 9,  weight: .semibold, alpha: 0.45)
     private let outWLabel     = label("— W",    size: 13, weight: .bold,     alpha: 1)
 
+    // Per-pack row (MAIN / EXTRA), shown only when an extra battery is attached.
+    private var packCols: [(title: NSTextField, value: NSTextField, col: NSStackView)] = []
+    private var packsRow: NSStackView!
+    private var packsRowWidth: NSLayoutConstraint!
+
     private let refreshButton = RefreshButton()
     var onRefresh: (() -> Void)?
 
@@ -79,11 +84,23 @@ class PopupPanel: NSPanel {
 
         let timeRow = hstack([timeBoltView, timeLabel], spacing: 4, align: .centerY)
 
+        // Pack row — one column per pack, outer columns pushed to the edges like the watts row
+        packCols = (0..<3).map { _ in
+            let t = label("", size: 9,  weight: .semibold, alpha: 0.45)
+            let v = label("", size: 11, weight: .medium,   alpha: 0.85)
+            return (t, v, vstack([t, v], spacing: 1))
+        }
+        packsRow = NSStackView(views: packCols.map { $0.col })
+        packsRow.orientation  = .horizontal
+        packsRow.alignment    = .top
+        packsRow.distribution = .equalSpacing
+
         let stack = NSStackView(views: [
             headerRow,
             pctRow,
             progressBar,
             timeRow,
+            packsRow,
             div,
             wattsRow,
         ])
@@ -104,6 +121,32 @@ class PopupPanel: NSPanel {
             div.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -PAD * 2),
             wattsRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -PAD * 2),
         ])
+        packsRowWidth = packsRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -PAD * 2)
+        packsRowWidth.isActive = true
+        packsRow.isHidden = true
+    }
+
+    private func setPacks(_ packs: [BatteryPack]) {
+        let show = packs.count > 1
+        if show {
+            let compact = packs.count > 2   // three columns don't fit "NN% · NNNN Wh"
+            for (i, c) in packCols.enumerated() {
+                guard i < packs.count else { c.col.isHidden = true; continue }
+                let p = packs[i]
+                let pct = p.soc.map { "\($0)%" } ?? "—"
+                c.col.isHidden      = false
+                c.title.stringValue = p.name
+                c.value.stringValue = compact ? pct : p.remainWh.map { "\(pct) · \($0) Wh" } ?? pct
+            }
+        }
+        guard packsRow.isHidden == show else { return }
+        packsRow.isHidden = !show
+        // A hidden row is detached from the stack, which removes its width constraint; restore it.
+        if show { packsRowWidth.isActive = true }
+    }
+
+    private func blankPacks() {
+        for c in packCols { c.value.stringValue = "—" }
     }
 
     func update(_ st: EFStatus) {
@@ -116,6 +159,7 @@ class PopupPanel: NSPanel {
         outWLabel.stringValue    = "\(Int(st.outW)) W"
         timeLabel.textColor      = NSColor.white.withAlphaComponent(0.75)
         timeBoltView.isHidden    = !st.hasTimeEstimate
+        setPacks(st.packs)
         refreshButton.setLoading(false)
 
         contentView?.layoutSubtreeIfNeeded()
@@ -130,6 +174,7 @@ class PopupPanel: NSPanel {
         timeLabel.stringValue    = "Updating…"
         timeLabel.textColor      = NSColor.white.withAlphaComponent(0.4)
         timeBoltView.isHidden    = true
+        blankPacks()
         inWLabel.stringValue     = "— W"
         outWLabel.stringValue    = "— W"
         refreshButton.setLoading(true)
@@ -142,6 +187,7 @@ class PopupPanel: NSPanel {
         timeLabel.stringValue    = "Lost connection"
         timeLabel.textColor      = NSColor.white.withAlphaComponent(0.4)
         timeBoltView.isHidden    = true
+        blankPacks()
         inWLabel.stringValue     = "— W"
         outWLabel.stringValue    = "— W"
         refreshButton.setLoading(false)

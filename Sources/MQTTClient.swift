@@ -1,5 +1,8 @@
 import Foundation
 import Network
+import os
+
+private let mqttLog = Logger(subsystem: "com.efstatus.app", category: "mqtt")
 
 // Minimal MQTT 3.1.1 client — subscribe-only, TLS, no external dependencies.
 final class MQTTClient {
@@ -20,6 +23,7 @@ final class MQTTClient {
     private var nextPktId:  UInt16 = 1
     private var isRunning   = false
     private var didNotifyDisconnect = false
+    private var publishCount = 0   // PUBLISH frames received this session
 
     // MARK: – Configuration (stored for reconnect)
     private(set) var host     = ""
@@ -41,6 +45,7 @@ final class MQTTClient {
             self.clientId = clientId
             self.isRunning = true
             self.didNotifyDisconnect = false
+            self.publishCount = 0
             self.openConnectionLocked()
         }
     }
@@ -196,8 +201,8 @@ final class MQTTClient {
         DispatchQueue.main.async { self.onActivity?() }
         switch pkt[0] & 0xF0 {
         case 0x20: connackLocked(pkt)
-        case 0x30: publishLocked(pkt, hdrLen: hdrLen)
-        case 0x90: break  // SUBACK
+        case 0x30: publishCount += 1; publishLocked(pkt, hdrLen: hdrLen)
+        case 0x90: subackLocked(pkt, hdrLen: hdrLen)
         case 0xD0: break  // PINGRESP
         default:   break
         }
@@ -206,13 +211,34 @@ final class MQTTClient {
     private func connackLocked(_ pkt: Data) {
         guard pkt.count >= 4 else { return }
         if pkt[3] == 0 {
+            mqttLog.notice("MQTT connected")
             startPingTimer()
             DispatchQueue.main.async { self.onConnect?() }
         } else {
             let err = NSError(domain: "MQTT", code: Int(pkt[3]),
                               userInfo: [NSLocalizedDescriptionKey: "CONNACK rejected (code \(pkt[3]))"])
+            mqttLog.error("MQTT CONNACK rejected, code \(pkt[3], privacy: .public)")
             failLocked(err)
         }
+    }
+
+    /// A refused subscription leaves a connection that answers pings but never delivers data,
+    /// so treat it as a disconnect and let the caller reconnect.
+    private func subackLocked(_ pkt: Data, hdrLen: Int) {
+        guard let code = Self.subackReturnCode(pkt, hdrLen: hdrLen) else { return }
+        if code == 0x80 {
+            mqttLog.error("MQTT subscription refused")
+            failLocked(NSError(domain: "MQTT", code: 0x80,
+                               userInfo: [NSLocalizedDescriptionKey: "MQTT subscription refused"]))
+        } else {
+            mqttLog.notice("MQTT subscribed, granted QoS \(code, privacy: .public)")
+        }
+    }
+
+    /// First return code of a SUBACK (after the 2-byte packet id): 0x00–0x02 granted QoS, 0x80 refused.
+    static func subackReturnCode(_ pkt: Data, hdrLen: Int) -> UInt8? {
+        let i = pkt.startIndex + hdrLen + 2
+        return i < pkt.endIndex ? pkt[i] : nil
     }
 
     private func publishLocked(_ pkt: Data, hdrLen: Int) {
@@ -261,6 +287,7 @@ final class MQTTClient {
 
     private func failLocked(_ error: Error?) {
         guard isRunning || connection != nil else { return }
+        mqttLog.notice("MQTT connection ended: \(error?.localizedDescription ?? "closed", privacy: .public)")
         isRunning = false
         teardownLocked()
         notifyDisconnectOnce(error)
@@ -274,6 +301,7 @@ final class MQTTClient {
 
     private func teardownLocked() {
         let conn = connection
+        if conn != nil { mqttLog.notice("MQTT session closed after \(self.publishCount, privacy: .public) PUBLISH frames") }
         connection = nil
         buffer.removeAll()
         DispatchQueue.main.async {

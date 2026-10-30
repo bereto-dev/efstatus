@@ -1,4 +1,7 @@
 import Cocoa
+import os
+
+private let connLog = Logger(subsystem: "com.efstatus.app", category: "connection")
 
 final class StatusBarController: NSObject {
     private var statusItem: NSStatusItem!
@@ -24,6 +27,10 @@ final class StatusBarController: NSObject {
     private var notifiedOffline = false
     private var isAsleep     = false
     private var quietUntil   = Date.distantPast    // no connection alerts during startup / wake
+    private var mqttConnectedAt:  Date?            // CONNACK of the current MQTT session
+    private var silentReconnects = 0               // reconnects since the feed last delivered data
+    private var mqttRawMessages  = 0               // PUBLISH payloads this session
+    private var mqttDataMessages = 0               // ...that carried device state
 
     // Timers
     private var pollTimer:     Timer?
@@ -53,6 +60,8 @@ final class StatusBarController: NSObject {
         static let watchdogInterval:   TimeInterval = 10
         static let mqttQuietAfter:     TimeInterval = 30
         static let mqttDeadAfter:      TimeInterval = 90
+        static let mqttSilentAfter:    TimeInterval = 180    // connected, pings answered, no device data
+        static let mqttSilentMax:      TimeInterval = 1800
         static let inputLostAfter:     TimeInterval = 10
         static let failuresForOffline  = 3
         static let connectionGrace:    TimeInterval = 30
@@ -91,6 +100,8 @@ final class StatusBarController: NSObject {
         mqttWanted = true
         reconnDelay = 5
         restFailures = 0
+        silentReconnects = 0
+        connLog.notice("Connecting to EcoFlow")
         quietUntil = Date().addingTimeInterval(Tuning.connectionGrace)
         resetTracking()
 
@@ -122,11 +133,13 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func willSleep() {
+        connLog.notice("Sleep: closing connections")
         isAsleep = true
         teardown()
     }
 
     @objc private func didWake() {
+        connLog.notice("Wake: reconnecting in 3 s")
         isAsleep = false
         // Give Wi-Fi a moment to come back before reconnecting.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
@@ -165,6 +178,9 @@ final class StatusBarController: NSObject {
         client.onConnect = { [weak self, weak client] in
             guard let self, self.mqttWanted else { return }
             self.lastMQTTPacketAt = Date()
+            self.mqttConnectedAt = Date()
+            self.mqttRawMessages = 0
+            self.mqttDataMessages = 0
             self.reconnDelay = 5
             client?.subscribe(to: mc.topic)
             self.updatePolling()
@@ -198,10 +214,14 @@ final class StatusBarController: NSObject {
         mqttClient = nil
         mqttLive = false
         lastMQTTPacketAt = nil
+        mqttConnectedAt = nil
     }
 
     private func handleMQTTMessage(_ json: [String: Any]) {
+        mqttRawMessages += 1
         guard let fields = EcoFlowAPI.normalizeMQTT(json) else { return }
+        mqttDataMessages += 1
+        silentReconnects = 0
         for (k, v) in fields { deviceState[k] = v }
         lastMQTTMessageAt = Date()
         if !mqttLive {
@@ -234,11 +254,30 @@ final class StatusBarController: NSObject {
         }
         // Half-open socket: pings go out every 30s, so 90s of silence means it's dead.
         if mqttClient != nil, let p = lastMQTTPacketAt, now.timeIntervalSince(p) >= Tuning.mqttDeadAfter {
+            connLog.notice("Live feed half-open, no packets for \(Int(Tuning.mqttDeadAfter), privacy: .public) s; reconnecting")
+            stopMQTTClient()
+            scheduleReconnect()
+        }
+        // Connected and answering pings, yet no device data. Seen after a sleep/wake: the session
+        // stayed up for hours delivering nothing while the app sat on the 60 s REST fallback.
+        // Reconnect as a relaunch would, backing off so a genuinely idle device isn't hammered.
+        if mqttClient != nil, let up = mqttConnectedAt,
+           Self.feedIsSilent(now: now, connectedAt: up, lastDataAt: lastMQTTMessageAt, silentReconnects: silentReconnects) {
+            connLog.notice("Live feed silent: \(self.mqttRawMessages, privacy: .public) messages, \(self.mqttDataMessages, privacy: .public) with device data this session; silent reconnect #\(self.silentReconnects + 1, privacy: .public)")
+            silentReconnects += 1
             stopMQTTClient()
             scheduleReconnect()
         }
         updatePolling()
         evaluateInput()
+    }
+
+    /// True once a live-feed session has gone the silence limit without device data, measured from
+    /// the later of connect and last data. The limit doubles per silent reconnect: 3, 6, 12, 24, then 30 min.
+    static func feedIsSilent(now: Date, connectedAt: Date, lastDataAt: Date?, silentReconnects: Int) -> Bool {
+        let limit = min(Tuning.mqttSilentAfter * pow(2, Double(min(silentReconnects, 8))), Tuning.mqttSilentMax)
+        let since = max(connectedAt, lastDataAt ?? connectedAt)
+        return now.timeIntervalSince(since) >= limit
     }
 
     // MARK: – REST polling (only when MQTT isn't delivering)
@@ -328,7 +367,7 @@ final class StatusBarController: NSObject {
 
         // ~60s time-based average of net watts for time estimates (MQTT can deliver
         // several readings a second); snap when the direction flips (plug/unplug).
-        let raw = st.inW - st.outW
+        let raw = st.batteryW ?? (st.inW - st.outW)
         let now = Date()
         if let s = smoothedNet, let at = smoothedAt, (s > 0) == (raw > 0) {
             let alpha = 1 - exp(-now.timeIntervalSince(at) / 60)

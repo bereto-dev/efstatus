@@ -12,6 +12,8 @@ final class MQTTClient {
     var onConnect:    (() -> Void)?
     var onDisconnect: ((Error?) -> Void)?
     var onActivity:   (() -> Void)?   // any inbound packet (PUBLISH, PINGRESP, …)
+    /// SUBACK granted (return code other than 0x80). Not called for a refusal.
+    var onSubscribed: (() -> Void)?
 
     // MARK: – Private state
     private let io = DispatchQueue(label: "com.efstatus.mqtt")
@@ -232,6 +234,7 @@ final class MQTTClient {
                                userInfo: [NSLocalizedDescriptionKey: "MQTT subscription refused"]))
         } else {
             mqttLog.notice("MQTT subscribed, granted QoS \(code, privacy: .public)")
+            DispatchQueue.main.async { self.onSubscribed?() }
         }
     }
 

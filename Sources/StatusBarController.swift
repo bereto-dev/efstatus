@@ -27,7 +27,7 @@ final class StatusBarController: NSObject {
     private var notifiedOffline = false
     private var isAsleep     = false
     private var quietUntil   = Date.distantPast    // no connection alerts during startup / wake
-    private var mqttConnectedAt:  Date?            // CONNACK of the current MQTT session
+    private var mqttLink     = MQTTLinkState()    // backoff and the CONNACK time of this attempt
     private var silentReconnects = 0               // reconnects since the feed last delivered data
     private var mqttRawMessages  = 0               // PUBLISH payloads this session
     private var mqttDataMessages = 0               // ...that carried device state
@@ -37,7 +37,6 @@ final class StatusBarController: NSObject {
     private var pollInterval:  TimeInterval = 0
     private var watchdogTimer: Timer?
     private var reconnTimer:   Timer?
-    private var reconnDelay:   TimeInterval = 5
 
     // Notification state
     private var sawInput           = false
@@ -98,7 +97,7 @@ final class StatusBarController: NSObject {
         deviceState.removeAll()
         pollKeys = []
         mqttWanted = true
-        reconnDelay = 5
+        mqttLink.resetForNewSession()
         restFailures = 0
         silentReconnects = 0
         connLog.notice("Connecting to EcoFlow")
@@ -172,30 +171,43 @@ final class StatusBarController: NSObject {
     }
 
     private func startMQTT(_ mc: MQTTCredentials) {
+        // The socket is not a session yet. Drop the previous CONNACK time and packet
+        // clock before the client pointer becomes non-nil, or the silent watchdog
+        // judges this handshake by the old connection's age.
+        mqttLink.beginAttempt()
+        lastMQTTPacketAt = nil
         let client = MQTTClient()
         mqttClient = client
 
         client.onConnect = { [weak self, weak client] in
-            guard let self, self.mqttWanted else { return }
+            guard let self, let client, self.mqttWanted, self.mqttClient === client else { return }
             self.lastMQTTPacketAt = Date()
-            self.mqttConnectedAt = Date()
+            // Transport only. A refused SUBACK must keep the backoff already earned.
+            self.mqttLink.transportConnected(at: Date())
             self.mqttRawMessages = 0
             self.mqttDataMessages = 0
-            self.reconnDelay = 5
-            client?.subscribe(to: mc.topic)
+            client.subscribe(to: mc.topic)
             self.updatePolling()
         }
-        client.onActivity = { [weak self] in
-            self?.lastMQTTPacketAt = Date()
+        client.onSubscribed = { [weak self, weak client] in
+            guard let self, let client, self.mqttWanted, self.mqttClient === client else { return }
+            self.mqttLink.sessionHealthy()
         }
-        client.onMessage = { [weak self] _, json in
-            self?.handleMQTTMessage(json)
+        client.onActivity = { [weak self, weak client] in
+            guard let self, let client, self.mqttClient === client else { return }
+            self.lastMQTTPacketAt = Date()
         }
-        client.onDisconnect = { [weak self] _ in
-            guard let self, self.mqttWanted else { return }
+        client.onMessage = { [weak self, weak client] _, json in
+            guard let self, let client, self.mqttClient === client else { return }
+            self.handleMQTTMessage(json)
+        }
+        client.onDisconnect = { [weak self, weak client] _ in
+            guard let self, let client, self.mqttClient === client else { return }
             self.mqttClient = nil
             self.mqttLive = false
             self.lastMQTTPacketAt = nil
+            self.mqttLink.disconnected()
+            guard self.mqttWanted else { return }
             self.updatePolling()
             self.scheduleReconnect()
         }
@@ -205,16 +217,19 @@ final class StatusBarController: NSObject {
     }
 
     private func stopMQTTClient() {
+        // Before the nil-client return: onDisconnect has already dropped the pointer,
+        // and the old CONNACK time must not survive into the next attempt.
+        mqttLink.beginAttempt()
+        mqttLive = false
+        lastMQTTPacketAt = nil
         guard let c = mqttClient else { return }
         c.onDisconnect = nil
         c.onMessage = nil
         c.onConnect = nil
+        c.onSubscribed = nil
         c.onActivity = nil
         c.disconnect()
         mqttClient = nil
-        mqttLive = false
-        lastMQTTPacketAt = nil
-        mqttConnectedAt = nil
     }
 
     private func handleMQTTMessage(_ json: [String: Any]) {
@@ -222,6 +237,7 @@ final class StatusBarController: NSObject {
         guard let fields = EcoFlowAPI.normalizeMQTT(json) else { return }
         mqttDataMessages += 1
         silentReconnects = 0
+        mqttLink.sessionHealthy()
         for (k, v) in fields { deviceState[k] = v }
         lastMQTTMessageAt = Date()
         if !mqttLive {
@@ -235,8 +251,8 @@ final class StatusBarController: NSObject {
     private func scheduleReconnect() {
         guard mqttWanted else { return }
         reconnTimer?.invalidate()
-        reconnTimer = makeTimer(reconnDelay, repeats: false) { [weak self] in self?.startMQTTSession() }
-        reconnDelay = min(reconnDelay * 2, 60)
+        let delay = mqttLink.takeReconnectDelay()
+        reconnTimer = makeTimer(delay, repeats: false) { [weak self] in self?.startMQTTSession() }
     }
 
     // MARK: – Watchdog (one timer for the whole session)
@@ -261,8 +277,13 @@ final class StatusBarController: NSObject {
         // Connected and answering pings, yet no device data. Seen after a sleep/wake: the session
         // stayed up for hours delivering nothing while the app sat on the 60 s REST fallback.
         // Reconnect as a relaunch would, backing off so a genuinely idle device isn't hammered.
-        if mqttClient != nil, let up = mqttConnectedAt,
-           Self.feedIsSilent(now: now, connectedAt: up, lastDataAt: lastMQTTMessageAt, silentReconnects: silentReconnects) {
+        if mqttLink.silentWatchdogShouldReconnect(
+            clientExists: mqttClient != nil,
+            now: now,
+            lastDataAt: lastMQTTMessageAt,
+            silentReconnects: silentReconnects,
+            silentAfter: Tuning.mqttSilentAfter,
+            silentMax: Tuning.mqttSilentMax) {
             connLog.notice("Live feed silent: \(self.mqttRawMessages, privacy: .public) messages, \(self.mqttDataMessages, privacy: .public) with device data this session; silent reconnect #\(self.silentReconnects + 1, privacy: .public)")
             silentReconnects += 1
             stopMQTTClient()
@@ -275,9 +296,13 @@ final class StatusBarController: NSObject {
     /// True once a live-feed session has gone the silence limit without device data, measured from
     /// the later of connect and last data. The limit doubles per silent reconnect: 3, 6, 12, 24, then 30 min.
     static func feedIsSilent(now: Date, connectedAt: Date, lastDataAt: Date?, silentReconnects: Int) -> Bool {
-        let limit = min(Tuning.mqttSilentAfter * pow(2, Double(min(silentReconnects, 8))), Tuning.mqttSilentMax)
-        let since = max(connectedAt, lastDataAt ?? connectedAt)
-        return now.timeIntervalSince(since) >= limit
+        MQTTLinkState.feedIsSilent(
+            now: now,
+            connectedAt: connectedAt,
+            lastDataAt: lastDataAt,
+            silentReconnects: silentReconnects,
+            silentAfter: Tuning.mqttSilentAfter,
+            silentMax: Tuning.mqttSilentMax)
     }
 
     // MARK: – REST polling (only when MQTT isn't delivering)

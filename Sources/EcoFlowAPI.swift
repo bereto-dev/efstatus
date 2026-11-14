@@ -10,11 +10,16 @@ struct EFStatus {
     let deviceLabel: String
     /// Smoothed (inW - outW) used for time estimates so they don't jump with every watt flicker.
     var smoothedNetW: Double? = nil
+    /// Per-pack breakdown, filled only when an extra battery is attached (main pack first).
+    var packs: [BatteryPack] = []
+    /// Net power at the packs (+ charging, − discharging), set only with an extra battery attached:
+    /// there, port watts can't tell external power from the transfer between packs.
+    var batteryW: Double? = nil
 
     var socLabel: String { soc.map { "\($0)%" } ?? "—" }
     var socProgress: Double { soc.map { Double($0) / 100.0 } ?? 0 }
 
-    private var netW: Double { smoothedNetW ?? (inW - outW) }
+    private var netW: Double { smoothedNetW ?? batteryW ?? (inW - outW) }
 
     var timeToEmptyMin: Int? {
         let net = -netW
@@ -40,6 +45,14 @@ struct EFStatus {
     }
 
     var hasTimeEstimate: Bool { timeToFullMin != nil || timeToEmptyMin != nil }
+}
+
+/// One battery pack: the main unit's built-in pack or an attached extra battery.
+struct BatteryPack {
+    let name: String
+    let soc: Int?
+    let remainWh: Int?
+    let capacityWh: Int?
 }
 
 struct MQTTCredentials {
@@ -76,11 +89,15 @@ final class EcoFlowAPI {
         "pd.wattsInSum", "pd.wattsOutSum", "pd.wattsOut", "pd.soc",
         "inv.inputWatts", "inv.outputWatts", "mppt.inWatts",
         "bms_emsStatus.lcdShowSoc", "bms_bmsStatus.soc",
-        "bms_bmsStatus.remainCap", "bms_bmsStatus.designCap", "bms_bmsStatus.vol",
+        "bms_bmsStatus.remainCap", "bms_bmsStatus.designCap", "bms_bmsStatus.vol", "bms_bmsStatus.amp",
         "bmsMaster.f32ShowSoc", "bmsMaster.soc", "bmsMaster.inputWatts", "bmsMaster.outputWatts",
         "cmsBattSoc", "ems.soc", "soc", "powInSumW", "powOutSumW",
         "wattsInSum", "wattsOutSum", "inputWatts", "outputWatts", "inputPower", "outputPower",
-    ]
+    ] + slavePrefixes.flatMap { p in ["soc", "remainCap", "designCap", "vol", "amp"].map { p + $0 } }
+
+    /// Where an attached extra battery reports: bms_slave on a DELTA 2,
+    /// bms_slave_bmsSlaveStatus_N on a DELTA 2 Max (up to two extra batteries).
+    static let slavePrefixes = ["bms_slave.", "bms_slave_bmsSlaveStatus_1.", "bms_slave_bmsSlaveStatus_2."]
 
     /// Full quota (~260 fields). Used on connect, manual refresh and diagnostics.
     func fetchAllQuota() async throws -> [String: Any] {
@@ -156,6 +173,9 @@ final class EcoFlowAPI {
         "emsStatus":  "bms_emsStatus.",
         "bmsInfo":    "bms_bmsInfo.",
         "kitInfo":    "bms_kitInfo.",
+        "bmsSlaveStatus":   "bms_slave.",
+        "bmsSlaveStatus_1": "bms_slave_bmsSlaveStatus_1.",
+        "bmsSlaveStatus_2": "bms_slave_bmsSlaveStatus_2.",
     ]
 
     /// Numeric fields of an MQTT quota message, keyed like the REST quota. Nil for
@@ -184,7 +204,7 @@ final class EcoFlowAPI {
         let isDelta2 = q["mppt.inWatts"] != nil || q["inv.inputWatts"] != nil
         let isDelta3 = q["bmsMaster.inputWatts"] != nil || q["powInSumW"] != nil
 
-        let inW: Double
+        var inW: Double
         let outW: Double
         if isDelta2 {
             // pd.wattsInSum is the device's own total of every input (AC + solar + car).
@@ -200,13 +220,58 @@ final class EcoFlowAPI {
 
         // Wh from BMS mAh × mV
         let vol      = dOpt("bms_bmsStatus.vol")
-        let remainWh = zip2(dOpt("bms_bmsStatus.remainCap"), vol).map { Int($0 * $1 / 1_000_000) }
-        let capWh    = zip2(dOpt("bms_bmsStatus.designCap"), vol).map { Int($0 * $1 / 1_000_000) }
+        var remainWh = zip2(dOpt("bms_bmsStatus.remainCap"), vol).map { Int($0 * $1 / 1_000_000) }
+        var capWh    = zip2(dOpt("bms_bmsStatus.designCap"), vol).map { Int($0 * $1 / 1_000_000) }
+
+        // Extra batteries report through the main unit. A pack counts only when it reports a real
+        // capacity and voltage, so a missing or zeroed slave leaves the main-only numbers untouched.
+        var extras: [BatteryPack] = []
+        var extraPrefixes: [String] = []
+        for p in slavePrefixes {
+            guard let design = dOpt(p + "designCap"), design > 0,
+                  let v = dOpt(p + "vol"), v > 0 else { continue }
+            let cap  = Int(design * v / 1_000_000)
+            let pSoc = dOpt(p + "soc").map { Int($0.rounded()) }
+            let rem  = dOpt(p + "remainCap").map { Int($0 * v / 1_000_000) } ?? pSoc.map { cap * $0 / 100 }
+            extras.append(BatteryPack(name: "EXTRA", soc: pSoc, remainWh: rem, capacityWh: cap))
+            extraPrefixes.append(p)
+        }
+        var packs: [BatteryPack] = []
+        if !extras.isEmpty, let mainRem = remainWh, let mainCap = capWh,
+           extras.allSatisfy({ $0.remainWh != nil }) {
+            if extras.count > 1 {
+                extras = extras.enumerated().map { i, e in
+                    BatteryPack(name: "EXTRA \(i + 1)", soc: e.soc, remainWh: e.remainWh, capacityWh: e.capacityWh)
+                }
+            }
+            let mainSoc = dOpt("bms_bmsStatus.soc").map { Int($0.rounded()) }
+            packs    = [BatteryPack(name: "MAIN", soc: mainSoc, remainWh: mainRem, capacityWh: mainCap)] + extras
+            remainWh = packs.reduce(0) { $0 + ($1.remainWh ?? 0) }
+            capWh    = packs.reduce(0) { $0 + ($1.capacityWh ?? 0) }
+        }
+
+        var batteryW: Double? = nil
+        if !packs.isEmpty {
+            // A discharging DELTA 2 counts what the extra battery feeds it as input: on battery,
+            // pd.wattsInSum read 74 W, exactly bms_slave.outputWatts, with AC and solar at 0 W.
+            // Read the external ports instead. Each is measured directly, so no pair of messages
+            // arriving out of step can fake input during an outage.
+            if isDelta2 && extraPrefixes.contains("bms_slave.") {
+                inW = d("inv.inputWatts") + d("mppt.inWatts")
+            }
+            // Time estimates from the packs' own net power (mA × mV): it covers every pack and the
+            // inverter's losses. Port watts stay the fallback if any pack lacks current or voltage.
+            let flows = (["bms_bmsStatus."] + extraPrefixes).map { p in
+                zip2(dOpt(p + "amp"), dOpt(p + "vol")).map { $0.0 * $0.1 / 1_000_000 }
+            }
+            if !flows.contains(where: { $0 == nil }) { batteryW = flows.reduce(0) { $0 + ($1 ?? 0) } }
+        }
 
         let deviceLabel = isDelta3 ? "DELTA 3" : isDelta2 ? "DELTA 2" : "ECOFLOW"
 
         return EFStatus(inW: inW, outW: outW, soc: soc,
-                        remainWh: remainWh, capacityWh: capWh, deviceLabel: deviceLabel)
+                        remainWh: remainWh, capacityWh: capWh, deviceLabel: deviceLabel,
+                        packs: packs, batteryW: batteryW)
     }
 
     private static func zip2(_ a: Double?, _ b: Double?) -> (Double, Double)? {

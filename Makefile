@@ -18,7 +18,12 @@ SPARKLE_FW      = $(SPARKLE_DIR)/Sparkle.framework
 SWIFTC_FLAGS = -O -framework Cocoa -framework UserNotifications -framework CryptoKit -framework Network \
 	-F $(SPARKLE_DIR) -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks
 
-.PHONY: all clean run zip
+.PHONY: all clean run zip test-mqtt-lifecycle
+
+# Foundation-only. No Cocoa, Network, or device. Run from the repo root.
+test-mqtt-lifecycle:
+	swiftc Sources/MQTTLifecycle.swift Tests/MQTTLifecycleHarness.swift -o /tmp/efstatus-mqtt-lifecycle-harness
+	/tmp/efstatus-mqtt-lifecycle-harness
 
 all: $(BUNDLE)
 

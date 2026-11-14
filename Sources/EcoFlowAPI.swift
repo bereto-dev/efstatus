@@ -45,7 +45,9 @@ struct EFStatus {
     var timeLabel: String {
         if let t = timeToFullMin  { return "Full in \(fmtTime(t))" }
         if let t = timeToEmptyMin { return "\(fmtTime(t)) remaining" }
-        return inW == 0 ? "No input power" : "Calculating…"
+        if remainWh == nil { return "Calculating…" }
+        // Battery idle: input covers the load (e.g. plugged in at the charge limit), or nothing runs.
+        return inW > 0 ? "On input power" : "No input power"
     }
 
     var hasTimeEstimate: Bool { timeToFullMin != nil || timeToEmptyMin != nil }

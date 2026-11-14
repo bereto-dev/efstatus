@@ -142,7 +142,7 @@ chmod +x diag.sh
 ### 2.6.1 — DELTA Pro support, better diagnostics
 - **DELTA Pro:** the popup names it DELTA PRO instead of DELTA 3, shows the remaining time during an outage instead of "Calculating…", and adds the MAIN / EXTRA row when an extra battery is attached
 - **DELTA Pro:** input now shows only what comes in from outside (AC, solar). Before, what the extra battery feeds the main unit counted as input
-- With the grid on and nothing drawing power, the time line no longer shows estimates of hundreds of hours from the battery's tiny idle current
+- When the battery is idle (for example plugged in at the charge limit), the time line reads "On input power" instead of "Calculating…" or estimates of hundreds of hours from the battery's tiny idle current
 - **Copy Diagnostics** now also includes the app version, what EFStatus shows, the live feed's state and a sample of its messages, so issues can be diagnosed from one paste
 
 ### 2.6.0 — Extra battery support, steadier live feed

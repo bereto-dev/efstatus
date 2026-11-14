@@ -1,4 +1,4 @@
-# EFStatus (v2.6.0)
+# EFStatus (v2.6.1)
 
 A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions. Ships as a universal binary for Intel and Apple Silicon (macOS 13+).
 
@@ -15,7 +15,7 @@ A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery st
 - With an extra battery attached: a MAIN / EXTRA row with each pack's % and Wh (the Wh and time estimates cover every pack)
 - Time to full / time to empty
 - Live input watts (green) and output watts (red)
-- Device model (DELTA 2 / DELTA 3)
+- Device model (DELTA 2 / DELTA 3 / DELTA PRO)
 
 SOC is shown as `—` when EcoFlow has not sent a battery percentage (it is not displayed as `0%` unless the device actually reports 0). If the device or API is unreachable, the menu bar and popup show `—` / Lost connection instead of leftover numbers.
 
@@ -36,7 +36,7 @@ On first launch (and whenever you change keys in Settings), **Save & Connect** c
 
 **Likely compatible** (same API structure, untested)
 - EcoFlow Delta 2 Max
-- EcoFlow Delta Pro
+- EcoFlow Delta Pro, with or without extra batteries (dedicated support since 2.6.1, built from a user's device data)
 - EcoFlow Delta Max
 - Delta 3
 - Delta Mini
@@ -121,7 +121,13 @@ Built by Roberto Pacheco because the EcoFlow Delta 2 doesn't surface consumption
 
 If you have an EcoFlow device not listed above and want to help add support for it, run the diagnostic from the app: right-click the menu bar icon → **Copy Diagnostics**, then open a [GitHub issue](https://github.com/bereto-dev/efstatus/issues) and paste the output.
 
-**Copy Diagnostics includes the device serial number on purpose** (along with the raw quota fields). Access Key and Secret Key are not copied.
+Copy Diagnostics includes:
+- the app version, macOS version and Mac type
+- what EFStatus shows: model, battery %, Wh, input, output, battery power and the time line
+- the live feed's state, and the latest message of each type it received
+- every raw field the device reports
+
+**It includes the device serial number on purpose.** Access Key and Secret Key are not copied.
 
 Or run it from the terminal (this script does **not** print credentials or the serial number):
 
@@ -132,6 +138,12 @@ chmod +x diag.sh
 ```
 
 ## Changelog
+
+### 2.6.1 — DELTA Pro support, better diagnostics
+- **DELTA Pro:** the popup names it DELTA PRO instead of DELTA 3, shows the remaining time during an outage instead of "Calculating…", and adds the MAIN / EXTRA row when an extra battery is attached
+- **DELTA Pro:** input now shows only what comes in from outside (AC, solar). Before, what the extra battery feeds the main unit counted as input
+- With the grid on and nothing drawing power, the time line no longer shows estimates of hundreds of hours from the battery's tiny idle current
+- **Copy Diagnostics** now also includes the app version, what EFStatus shows, the live feed's state and a sample of its messages, so issues can be diagnosed from one paste
 
 ### 2.6.0 — Extra battery support, steadier live feed
 - **Extra batteries:** with an extra battery on a DELTA 2 or DELTA 2 Max, the popup adds a MAIN / EXTRA row with each pack's percent and Wh, and the Wh next to the percentage is the total of all packs

@@ -31,6 +31,7 @@ final class StatusBarController: NSObject {
     private var silentReconnects = 0               // reconnects since the feed last delivered data
     private var mqttRawMessages  = 0               // PUBLISH payloads this session
     private var mqttDataMessages = 0               // ...that carried device state
+    private var mqttSamples: [String: [String: Any]] = [:] // latest raw payload per typeCode, for diagnostics
 
     // Timers
     private var pollTimer:     Timer?
@@ -95,6 +96,7 @@ final class StatusBarController: NSObject {
         creds = c
         api = EcoFlowAPI(accessKey: c.accessKey, secretKey: c.secretKey, serial: c.serial)
         deviceState.removeAll()
+        mqttSamples.removeAll()
         pollKeys = []
         mqttWanted = true
         mqttLink.resetForNewSession()
@@ -234,6 +236,7 @@ final class StatusBarController: NSObject {
 
     private func handleMQTTMessage(_ json: [String: Any]) {
         mqttRawMessages += 1
+        recordMQTTSample(json)
         guard let fields = EcoFlowAPI.normalizeMQTT(json) else { return }
         mqttDataMessages += 1
         silentReconnects = 0
@@ -540,9 +543,11 @@ final class StatusBarController: NSObject {
 
     @objc private func copyDiagnostics() {
         guard let api else { Notifier.send(.app, "No credentials configured."); return }
+        let summary = diagnosticSummary()
         Task {
             do {
-                let output = try await api.fetchRawFields()
+                let raw = try await api.fetchRawFields()
+                let output = summary + "\n\n== Full device data (REST) ==\n" + raw
                 await MainActor.run {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(output, forType: .string)
@@ -552,6 +557,65 @@ final class StatusBarController: NSObject {
                 Notifier.send(.app, "Failed to fetch diagnostics.")
             }
         }
+    }
+
+    // MARK: – Diagnostics
+
+    /// Keeps the latest raw payload of each MQTT message type, so a diagnostic shows the live
+    /// feed's own key names, which can differ from the REST quota.
+    private func recordMQTTSample(_ json: [String: Any]) {
+        let type = (json["typeCode"] as? String) ?? (json["cmdFunc"].map { "cmdFunc \($0)" }) ?? "untyped"
+        guard mqttSamples[type] != nil || mqttSamples.count < 16 else { return }
+        mqttSamples[type] = json
+    }
+
+    /// What EFStatus made of the data and how it is connected: the part a raw field dump can't show.
+    private func diagnosticSummary() -> String {
+        let info = Bundle.main.infoDictionary
+        let ver  = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        let os   = ProcessInfo.processInfo.operatingSystemVersionString
+        #if arch(arm64)
+        let arch = "Apple Silicon"
+        #else
+        let arch = "Intel"
+        #endif
+        func ago(_ d: Date?) -> String { d.map { "\(Int(Date().timeIntervalSince($0))) s ago" } ?? "never" }
+
+        var l = ["EFStatus Diagnostic — \(creds?.serial ?? "?")",
+                 "App \(ver) (\(build)) · macOS \(os) · \(arch)", ""]
+
+        l.append("== What EFStatus shows ==")
+        if let st = lastStatus {
+            l.append("Model: \(st.deviceLabel)")
+            l.append("Battery: \(st.socLabel) · \(st.remainWh.map(String.init) ?? "?") of \(st.capacityWh.map(String.init) ?? "?") Wh")
+            l.append("Input: \(Int(st.inW)) W · Output: \(Int(st.outW)) W")
+            l.append("Battery power: \(st.batteryW.map { "\(Int($0)) W" } ?? "n/a") · smoothed net: \(st.smoothedNetW.map { "\(Int($0)) W" } ?? "n/a")")
+            l.append("Time line: \(st.timeLabel)")
+            if !st.packs.isEmpty {
+                l.append("Packs: " + st.packs.map { p in
+                    "\(p.name) \(p.soc.map { "\($0)%" } ?? "?") \(p.remainWh.map(String.init) ?? "?")/\(p.capacityWh.map(String.init) ?? "?") Wh"
+                }.joined(separator: " | "))
+            }
+        } else {
+            l.append("No status yet")
+        }
+        l.append(isOffline ? "State: offline" : "State: online")
+
+        l.append(""); l.append("== Connection ==")
+        l.append("Live feed (MQTT): \(mqttLive ? "delivering data" : mqttClient != nil ? "connected, no data yet" : "not connected")" +
+                 " · last data \(ago(lastMQTTMessageAt)) · last packet \(ago(lastMQTTPacketAt))")
+        l.append("Messages this session: \(mqttDataMessages) with data / \(mqttRawMessages) total · silent reconnects: \(silentReconnects)")
+        l.append("REST polling: \(pollInterval > 0 ? "every \(Int(pollInterval)) s" : "off") · \(pollKeys.count) selected keys")
+
+        l.append(""); l.append("== Live feed sample (latest message per type) ==")
+        if mqttSamples.isEmpty { l.append("none received") }
+        for k in mqttSamples.keys.sorted() {
+            guard let data = try? JSONSerialization.data(withJSONObject: mqttSamples[k]!, options: [.sortedKeys]),
+                  let text = String(data: data, encoding: .utf8) else { continue }
+            l.append("[\(k)] " + (text.count > 3000 ? String(text.prefix(3000)) + " …(truncated)" : text))
+        }
+        return l.joined(separator: "\n")
     }
 
     @objc private func showAbout() {

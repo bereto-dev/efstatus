@@ -1,4 +1,4 @@
-# EFStatus (v2.5.0)
+# EFStatus (v2.6.0)
 
 A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery status — no phone app needed, no Node.js, no cloud subscriptions. Ships as a universal binary for Intel and Apple Silicon (macOS 13+).
 
@@ -12,6 +12,7 @@ A lightweight macOS menu bar app that shows real-time EcoFlow Delta 2 battery st
 
 **Popup:**
 - Battery % + remaining Wh + visual bar
+- With an extra battery attached: a MAIN / EXTRA row with each pack's % and Wh (the Wh and time estimates cover every pack)
 - Time to full / time to empty
 - Live input watts (green) and output watts (red)
 - Device model (DELTA 2 / DELTA 3)
@@ -30,6 +31,7 @@ On first launch (and whenever you change keys in Settings), **Save & Connect** c
 
 **Confirmed working**
 - EcoFlow Delta 2 ✅ (tested)
+- EcoFlow Delta 2 + Delta 2 Max Extra Battery ✅ (tested)
 - EcoFlow Delta 3 Max ✅ (tested)
 
 **Likely compatible** (same API structure, untested)
@@ -130,6 +132,14 @@ chmod +x diag.sh
 ```
 
 ## Changelog
+
+### 2.6.0 — Extra battery support, steadier live feed
+- **Extra batteries:** with an extra battery on a DELTA 2 or DELTA 2 Max, the popup adds a MAIN / EXTRA row with each pack's percent and Wh, and the Wh next to the percentage is the total of all packs
+- Time remaining and "Full in" now count every pack and use the batteries' own power, so they match reality (a DELTA 2 with an extra battery showed ~30 h left when the real figure was ~18 h)
+- With an extra battery, input no longer counts what the extra battery feeds the main unit: it reads 0 W on battery, so the "No input power" alert works during a power cut
+- If the live feed stays connected but stops sending data (seen after the Mac wakes up), EFStatus reconnects on its own instead of falling back to 60-second updates until relaunch
+- Without an extra battery, every number is the same as before
+- Thanks to [@andotsy](https://github.com/andotsy) for this release: the extra-battery support and the live-feed fix are their contribution ([#3](https://github.com/bereto-dev/efstatus/pull/3))
 
 ### 2.5.0 — Automatic updates
 - EFStatus now updates itself: once a day it checks for a new version and shows what's new with an **Install and Relaunch** button

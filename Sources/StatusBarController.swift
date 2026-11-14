@@ -293,18 +293,6 @@ final class StatusBarController: NSObject {
         evaluateInput()
     }
 
-    /// True once a live-feed session has gone the silence limit without device data, measured from
-    /// the later of connect and last data. The limit doubles per silent reconnect: 3, 6, 12, 24, then 30 min.
-    static func feedIsSilent(now: Date, connectedAt: Date, lastDataAt: Date?, silentReconnects: Int) -> Bool {
-        MQTTLinkState.feedIsSilent(
-            now: now,
-            connectedAt: connectedAt,
-            lastDataAt: lastDataAt,
-            silentReconnects: silentReconnects,
-            silentAfter: Tuning.mqttSilentAfter,
-            silentMax: Tuning.mqttSilentMax)
-    }
-
     // MARK: – REST polling (only when MQTT isn't delivering)
 
     private func updatePolling() {

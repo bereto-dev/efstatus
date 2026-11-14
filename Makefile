@@ -2,6 +2,7 @@
 # MIN_OS 13.0: required for universal build on macOS 27 toolchain (x86_64 Swift compat56 shim dropped below 13.0).
 #   make        -> EFStatus.app (universal)
 #   make zip    -> dist/EFStatus-<version>.zip
+#   make test-mqtt-lifecycle -> MQTT reconnect/backoff checks (Foundation only, no device)
 # Sparkle (automatic updates) is downloaded once into vendor/ and checked against its SHA-256.
 APP     = EFStatus
 BUNDLE  = $(APP).app
@@ -19,11 +20,6 @@ SWIFTC_FLAGS = -O -framework Cocoa -framework UserNotifications -framework Crypt
 	-F $(SPARKLE_DIR) -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks
 
 .PHONY: all clean run zip test-mqtt-lifecycle
-
-# Foundation-only. No Cocoa, Network, or device. Run from the repo root.
-test-mqtt-lifecycle:
-	swiftc Sources/MQTTLifecycle.swift Tests/MQTTLifecycleHarness.swift -o /tmp/efstatus-mqtt-lifecycle-harness
-	/tmp/efstatus-mqtt-lifecycle-harness
 
 all: $(BUNDLE)
 
@@ -60,6 +56,11 @@ zip: $(BUNDLE)
 	@rm -f dist/$(APP)-$(VERSION).zip
 	@ditto -c -k --sequesterRsrc --keepParent $(BUNDLE) dist/$(APP)-$(VERSION).zip
 	@echo "✓ Packaged dist/$(APP)-$(VERSION).zip"
+
+# Foundation-only. No Cocoa, Network, or device. Run from the repo root.
+test-mqtt-lifecycle:
+	swiftc Sources/MQTTLifecycle.swift Tests/MQTTLifecycleHarness.swift -o /tmp/efstatus-mqtt-lifecycle-harness
+	/tmp/efstatus-mqtt-lifecycle-harness
 
 run: all
 	open $(BUNDLE)
